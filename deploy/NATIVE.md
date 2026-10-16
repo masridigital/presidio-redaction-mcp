@@ -7,7 +7,7 @@ Azure Container Apps is the primary deployment (`infra/`, `docs/azure-deploy.md`
 | Unit | User | Bind |
 |---|---|---|
 | `presidio-analyzer.service` | `presidio-analyzer` | `127.0.0.1:5001` TLS |
-| `presidio-anonymizer.service` | `presidio-anonymizer` | `127.0.0.1:5002` TLS |
+| `presidio-anonymizer.service` | `presidio-anonymizer` | `127.0.0.1:5002` HTTP, not enabled |
 | `presidio-redaction-mcp.service` | `presidio-proxy` | `10.8.0.1:8444` TLS in lab. Production is the private Entra listener. |
 | `presidio-wg0.service` | root (wg-quick) | `10.8.0.1/24`, listen UDP 51820 |
 
@@ -35,11 +35,11 @@ UFW default-deny incoming and outgoing.
 
 Production callers authenticate with Entra ID through Azure API Management on a private ingress. The container re-validates the JWT. Production refuses to start unless `auth_mode` is `entra`. Cloudflare Tunnel is not part of this deploy. PHI-capable callers on the optional VM use WireGuard. `deploy/wireguard/wg0.conf.template` is not installed as a live `wg0.conf`. Peers are `10.8.0.2/32` and upward. The VPN listener rejects a client IP outside `10.8.0.0/24`.
 
-There is no Cloudflare listener and no grok-bot service token. The `cloudflare` value on grok-bot is a non-PHI policy mark. Edge choices for a future door are in `docs/grok-bot-edge-options.md`. Cloudflare Access JWTs are not accepted.
+There is no Cloudflare listener and no grok-bot service token. The `external-nonphi` value on grok-bot is a non-PHI policy mark. Edge choices for a future door are in `docs/grok-bot-edge-options.md`. Cloudflare Access JWTs are not accepted.
 
 ## Result hits for grok-bot
 
-A Presidio hit in a tool result headed to grok-bot, or to any caller who is not an Entra-authenticated PHI caller on the private ingress, is **blocked** (`phi_in_non_baa_tool_result`), not masked and returned. grok-bot stays usable because its allowlist is the structured tools `stackjack_health_check`, `stackjack_get_service_status`, and `UPTIMEROBOT_GET_MONITORS`, and free-text, date, and IP fields are dropped before redaction. A hit that remains in an allowed field is still blocked. Tool arguments for a caller marked `cloudflare` are blocked when any entity is detected (`phi_in_cloudflare_tool_args`). Masked results are returned only to a PHI caller authenticated with Entra on the private ingress. The optional anonymizer unit is not enabled. The anonymizer in Azure is the digest-pinned image.
+A Presidio hit in a tool result headed to grok-bot, or to any caller who is not an Entra-authenticated PHI caller on the private ingress, is **blocked** (`phi_in_non_baa_tool_result`), not masked and returned. grok-bot stays usable because its allowlist is the structured tools `stackjack_health_check`, `stackjack_get_service_status`, and `UPTIMEROBOT_GET_MONITORS`, and free-text, date, and IP fields are dropped before redaction. A hit that remains in an allowed field is still blocked. Tool arguments for a caller marked `external-nonphi` are blocked when any entity is detected (`phi_in_external_nonphi_tool_args`). Masked results are returned only to a PHI caller authenticated with Entra on the private ingress. The optional anonymizer unit is not enabled. It listens on `127.0.0.1:5002` when started. The anonymizer in Azure is the digest-pinned image on port 3001.
 
 ## Audit
 

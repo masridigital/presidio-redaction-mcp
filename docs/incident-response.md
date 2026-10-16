@@ -8,7 +8,7 @@ Trace: Reggie control map, HIPAA 164.308(a)(6) and 164.402, NYDFS 500.16 and 500
 
 Open a review when any of the following is true:
 
-- Audit reason `phi_in_cloudflare_tool_args` (a Cloudflare caller put identifier-bearing tool arguments on the tunnel before Presidio could block them).
+- Audit reason `phi_in_external_nonphi_tool_args` (an external-nonphi caller put identifier-bearing tool arguments on a path where Presidio blocked them).
 - A sampling review, user report, or upstream log shows an identifier that the proxy returned or forwarded unmasked.
 - Presidio failed open in any other component (this proxy is built to fail closed; a fail-open report is itself the incident).
 - The allowlist changed without a `config_change` audit row, or a tool outside the day-1 list was observed.

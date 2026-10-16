@@ -47,7 +47,7 @@ callers:
     phi_capable: false
     baa: false
     allowed_ingress:
-      - cloudflare
+      - external-nonphi
     token_secret: grok_bot_token
     allowed_tools:
       - stackjack_health_check

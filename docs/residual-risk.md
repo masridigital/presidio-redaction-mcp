@@ -18,7 +18,7 @@ Fail-closed behavior is a separate control, not this acceptance. Analyzer or ano
 
 ## Rules that bound it
 
-- Grok Bot is not a PHI caller. Its tool arguments still cross Cloudflare before Presidio. Callers do not put PHI in those arguments. A detection on that ingress is blocked and audited as `phi_in_cloudflare_tool_args`, and that row is an incident candidate because the hop already happened.
+- Grok Bot is not a PHI caller. Callers do not put PHI in its tool arguments. A detection on the `external-nonphi` mark is blocked and audited as `phi_in_external_nonphi_tool_args`. There is no Cloudflare listener in this tree. A future edge that terminates TLS can see those arguments, and that row stays an incident candidate.
 - PHI-capable callers (`claude-local`, `open-webui`) use the VPN listener only. Arguments are masked before a no-PHI upstream is called. A token on the wrong listener is 401 and makes no upstream call.
 - StackJack and Composio have no BAAs. Cap's decision is the written no-PHI scope in `docs/upstream-scope-policy.md`. Day-1 tools are non-PHI. PHI in a result is redacted and is an incident candidate. It is not a reason to add a PHI tool, and it is not a prompt to request a BAA.
 - There is no fallback to an unredacted tool. If this stack is down, users go to the Green lane only.
@@ -36,4 +36,4 @@ A vendor incident that affects non-PHI operational data those upstreams already 
 
 ## Review
 
-Joseph reviews fail-closed events, `phi_in_cloudflare_tool_args`, denied tools, and entity-count spikes weekly. The allowlist is reviewed monthly. Caller tokens are reviewed quarterly. A change to this acceptance, the floors, or the allowlist waits for Marko under `docs/allowlist-change-process.md`.
+Joseph reviews fail-closed events, `phi_in_external_nonphi_tool_args`, denied tools, and entity-count spikes weekly. The allowlist is reviewed monthly. Caller tokens are reviewed quarterly. A change to this acceptance, the floors, or the allowlist waits for Marko under `docs/allowlist-change-process.md`.

@@ -15,4 +15,6 @@ regexes = [
   '''ca_day1_uptimerobot_nonphi_ro''',
   # Public Azure built-in role definition id for Key Vault Secrets User. Not a credential.
   '''4633458b-17de-408a-b874-0445c86b69e6''',
+  # Public Azure built-in role definition id for AcrPull. Not a credential.
+  '''7f951dda-4ed3-4680-a7ca-43fe172d538d''',
 ]

@@ -11,15 +11,12 @@ WorkingDirectory=/opt/presidio-anonymizer
 Environment=PRESIDIO_ROLE=anonymizer
 Environment=PRESIDIO_BIND=127.0.0.1
 Environment=PRESIDIO_PORT=5002
-Environment=PRESIDIO_CERT=/etc/presidio-redaction-mcp/tls/internal.pem
-Environment=PRESIDIO_KEY=/etc/presidio-redaction-mcp/tls/internal.key
 Environment=HOME=/var/lib/presidio-anonymizer
 Environment=PYTHONDONTWRITEBYTECODE=1
-# Primary anonymizer is the digest-pinned Container App image. This unit is not
-# enabled by the installer. It starts only when the Microsoft app.py from tag
-# 2.2.362 has been copied into the working directory.
+# Azure keeps the digest-pinned anonymizer image on port 3001. This optional
+# unit is not enabled. The installer ships app.py, which binds PRESIDIO_PORT.
 ConditionPathExists=/opt/presidio-anonymizer/app.py
-ExecStart=/opt/presidio-anonymizer/venv/bin/gunicorn -w 1 -b 127.0.0.1:3001 "app:create_app()"
+ExecStart=/opt/presidio-anonymizer/venv/bin/python /opt/presidio-anonymizer/app.py
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=yes

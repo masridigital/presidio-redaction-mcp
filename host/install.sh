@@ -91,6 +91,8 @@ copy_presidio_server() {
   install -m 0640 "${REPO_DIR}/deploy/presidio/__init__.py" "${destination}/__init__.py"
   install -m 0640 "${REPO_DIR}/deploy/presidio/serve.py" "${destination}/serve.py"
   install -m 0640 "${REPO_DIR}/deploy/presidio/us_recognizers.py" "${destination}/us_recognizers.py"
+  install -d -m 0750 "$(prefix "/opt/presidio-anonymizer")"
+  install -m 0640 "${REPO_DIR}/deploy/presidio-anonymizer/app.py" "$(prefix "/opt/presidio-anonymizer/app.py")"
 }
 
 ensure_user() {

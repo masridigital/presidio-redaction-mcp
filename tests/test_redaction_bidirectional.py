@@ -34,7 +34,7 @@ def _payload(case: dict):
 def test_policy_fixture_covers_both_directions_and_is_synthetic():
     policy = _policy()
     assert policy["header"] == "SYNTHETIC"
-    assert policy["inbound_cloudflare"] == "block"
+    assert policy["inbound_external_nonphi"] == "block"
     assert policy["inbound_vpn"]["text"] == "mask"
     assert policy["inbound_vpn"]["base64"] == "block"
     assert policy["outbound"]["text"] == "mask"
@@ -108,7 +108,7 @@ def test_every_fixture_is_masked_or_blocked_in_both_directions(stack):
                 "stackjack_search_docs",
                 {"query": case["value"], "limit": 1},
             )
-            assert "phi_in_cloudflare_tool_args" in tool_text(blocked), case
+            assert "phi_in_external_nonphi_tool_args" in tool_text(blocked), case
             assert case["value"] not in blocked.text
             assert len(stack["runtime"].upstreams["stackjack"].calls) == before
 

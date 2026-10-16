@@ -20,7 +20,7 @@ The NSG allows VirtualNetwork, Entra JWKS (`AzureActiveDirectory` tcp/443), and 
 
 ## Image pulls
 
-`deny-all-outbound` blocks a pull from the public Microsoft Container Registry and from the public Azure Container Registry endpoint. Image pulls stay on the VNet: put the three digest-pinned images in an Azure Container Registry and attach a private endpoint on the private-endpoint subnet `10.40.9.0/24`. The Container Apps environment pulls that registry over the private endpoint. The anonymizer digest stays the pinned 2.2.362 digest; the registry holds a copy of that image. This template does not add a public egress rule for `mcr.microsoft.com`.
+`deny-all-outbound` blocks a pull from the public Microsoft Container Registry and from the public Azure Container Registry endpoint. The template creates a Premium Azure Container Registry with `publicNetworkAccess: Disabled`, admin user off, and `networkRuleBypassOptions: None`. It also creates the private DNS zone `privatelink.azurecr.io` and a private endpoint on `10.40.9.0/24` with group id `registry`. The Container App system identity has AcrPull (`7f951dda-4ed3-4680-a7ca-43fe172d538d`) and pulls through `registries` with identity `system`. Pass `containerImage`, `analyzerImage`, and `anonymizerImage` as digest-pinned copies in that registry. The anonymizer digest stays the pinned 2.2.362 digest. This template does not add a public egress rule for `mcr.microsoft.com`.
 
 `containerImage`, `analyzerImage`, and `anonymizerImage` must contain `@sha256:` after a repository name, and the digest suffix must be 64 characters. Bicep `assert` rejects a floating tag.
 
@@ -30,7 +30,7 @@ Grok Bot has no path through the internal API Management instance. The two optio
 
 ## Auth
 
-API Management runs `infra/apim-policy.xml`: `validate-azure-ad-token` for the three pre-registered client ids, then `validate-jwt` against the pinned tenant v2 issuer. The policy deletes `X-MS-CLIENT-PRINCIPAL`, `X-APIM-CLIENT-ID`, and `Cf-Access-Jwt-Assertion`. The container verifies the bearer token again. Tenant `f7812296-5bce-41dc-8102-b1b270e7c4c7`.
+API Management runs `infra/apim-policy.xml`: `validate-azure-ad-token` for the three pre-registered client ids, then `validate-jwt` against the pinned tenant v2 issuer. A `Phi.Caller` token must include `access_as_user` among its `scp` values, including when the claim lists more than one scope. `NonPhi.Caller` tokens are not required to carry `scp`. The policy deletes `X-MS-CLIENT-PRINCIPAL`, `X-APIM-CLIENT-ID`, and `Cf-Access-Jwt-Assertion`. The container verifies the bearer token again. Tenant `f7812296-5bce-41dc-8102-b1b270e7c4c7`.
 
 Key Vault holds secrets. The app identity has Secrets User (`4633458b-17de-408a-b874-0445c86b69e6`). No secret values are in the template.
 

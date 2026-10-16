@@ -43,7 +43,7 @@ Caller listeners are TLS 1.2+. Certificate and key are `LoadCredential=` from `/
 
 Journald rotates local logs. The proxy audit log is metadata only (caller, ingress, tool, keyed HMAC of args, entity counts, decision, config hash) under `/var/lib/presidio-redaction-mcp/audit/`. Ship it to the SIEM. Retain **6 years** where the record is HIPAA documentation and **5 years** for a NYDFS 500.6 audit trail, with at least 1 year searchable online. Logs must stay free of raw PHI; CI asserts the synthetic corpus never appears in the audit file.
 
-Who reviews: Joseph, weekly, for fail-closed events, `phi_in_cloudflare_tool_args`, denied tools, and entity-count spikes. Allowlist review monthly. Caller-token access review quarterly. Any allowlist expansion waits for Marko.
+Who reviews: Joseph, weekly, for fail-closed events, `phi_in_external_nonphi_tool_args`, denied tools, and entity-count spikes. Allowlist review monthly. Caller-token access review quarterly. Any allowlist expansion waits for Marko.
 
 ## Backups
 

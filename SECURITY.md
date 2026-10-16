@@ -21,11 +21,11 @@ Risk reduction for Yellow-lane tool data. Redaction is not HIPAA de-identificati
 
 | Caller | PHI-capable | Ingress | Token binding |
 |---|---|---|---|
-| `grok-bot` | No. Standing no-PHI rule. | No listener in this tree. The allowlist mark stays `cloudflare` so the result gate and `phi_in_cloudflare_tool_args` still apply. A future edge is `docs/grok-bot-edge-options.md` and is not built here. | Entra `NonPhi.Caller` when an edge exists. Lab bearer is VPN-only and rejects this caller. |
+| `grok-bot` | No. Standing no-PHI rule. | No listener in this tree. The allowlist mark is `external-nonphi`, so the result gate and `phi_in_external_nonphi_tool_args` still apply. A future edge is `docs/grok-bot-edge-options.md` and is not built here. | Entra `NonPhi.Caller` when an edge exists. Lab bearer is VPN-only and rejects this caller. |
 | `claude-local` | Yes | VPN in lab. Private Entra ingress in production. | Bearer in lab. Entra JWT in production. |
 | `open-webui` | No, until local-ai-stack clears it. | VPN in lab. Private Entra ingress in production. | Bearer in lab. Entra JWT in production. |
 
-A caller whose ingress mark is `cloudflare` is blocked when tool arguments contain an entity (`phi_in_cloudflare_tool_args`). This process does not serve a Cloudflare listener, so that path is not a live hop. PHI-capable callers use the VPN listener in lab and the private Entra ingress in production. Their arguments are masked before the no-PHI upstreams see them. A valid token on the wrong listener is 401 and makes no upstream call.
+A caller whose ingress mark is `external-nonphi` is blocked when tool arguments contain an entity (`phi_in_external_nonphi_tool_args`). This process does not serve a Cloudflare listener, so that path is not a live hop. PHI-capable callers use the VPN listener in lab and the private Entra ingress in production. Their arguments are masked before the no-PHI upstreams see them. A valid token on the wrong listener is 401 and makes no upstream call.
 
 A tool result that Presidio flags is **blocked**, not masked, for a non-BAA caller (`phi_capable: false`). The caller receives `phi_in_non_baa_tool_result` and not the redacted body. That check is in the service on the default path and does not depend on the optional verifier. PHI-capable callers still receive the masked result when the verifier is off.
 

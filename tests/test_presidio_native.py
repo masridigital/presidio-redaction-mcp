@@ -449,7 +449,7 @@ def test_proxy_round_trip_uses_the_real_engines(engines, tmp_path, monkeypatch):
                 "stackjack_search_docs",
                 {"query": SECRET, "limit": 1},
             )
-            assert "phi_in_cloudflare_tool_args" in tool_text(blocked)
+            assert "phi_in_external_nonphi_tool_args" in tool_text(blocked)
             assert len(runtime.upstreams["stackjack"].calls) == before
             outbound = mcp_call(vpn, SECRETS["open_webui_token"], "stackjack_health_check", {"limit": 1})
             text = tool_text(outbound)

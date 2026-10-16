@@ -7,8 +7,8 @@ Grok Bot stays a non-PHI caller in both options:
 - `phi_capable: false` and `baa: false`. The Entra app is `NonPhi.Caller` only. A `Phi.Caller` role on that app is `role_client_mismatch`.
 - A Presidio entity hit in a tool result is **blocked** (`phi_in_non_baa_tool_result`). The caller receives the reason code, not a masked body.
 - Allowed tools stay `stackjack_health_check`, `stackjack_get_service_status`, and `UPTIMEROBOT_GET_MONITORS`. Free-text, date, and IP fields are dropped before redaction.
-- The `cloudflare` allowlist mark remains the non-PHI policy label. It is not a listener. A future edge replaces that door. It does not grant a PHI role or a BAA allowlist entry.
-- Callers must keep PHI out of tool arguments. An edge that terminates TLS can see those bytes. `phi_in_cloudflare_tool_args` stays the block for that mark.
+- The `external-nonphi` allowlist mark is the non-PHI policy label. It is not a listener. A future edge replaces that door. It does not grant a PHI role or a BAA allowlist entry.
+- Callers must keep PHI out of tool arguments. An edge that terminates TLS can see those bytes. `phi_in_external_nonphi_tool_args` stays the block for that mark.
 
 Prices below are **estimates** from Azure public list prices, in US dollars, pay-as-you-go, before tax, discounts, and support. Microsoft states that prices on the pricing pages are estimates and are not quotes. Hourly retail meters are converted with a 730-hour month, which is the conventional month that matches the published monthly figures. Usage beyond the base fee is extra. Region for API Management meters is `eastus`. Front Door data and request rates below are Zone 1 (North America). Retrieved 2026-10-16.
 

@@ -83,12 +83,12 @@ class _ServiceResponse:
 
 
 def grok_call(stack, name: str, arguments: dict) -> _ServiceResponse:
-    """Call the service as grok-bot. There is no Cloudflare HTTP listener."""
+    """Call the service as grok-bot. external-nonphi is a policy mark, not a listener."""
     from presidio_redaction_mcp.auth import CallerIdentity
 
     text = stack["vpn"].portal.call(
         stack["runtime"].service.call_tool,
-        CallerIdentity(name="grok-bot", phi_capable=False, ingress="cloudflare"),
+        CallerIdentity(name="grok-bot", phi_capable=False, ingress="external-nonphi"),
         name,
         arguments,
     )

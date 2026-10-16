@@ -202,7 +202,7 @@ class RedactionService:
             )
             return _error(exc.reason_code)
 
-        if caller.ingress == "cloudflare" and _sensitive(arg_counts):
+        if caller.ingress == "external-nonphi" and _sensitive(arg_counts):
             self._audit(
                 caller,
                 upstream=upstream_name,
@@ -210,10 +210,10 @@ class RedactionService:
                 args_hmac=args_hmac,
                 counts=arg_counts,
                 decision="block",
-                reason="phi_in_cloudflare_tool_args",
+                reason="phi_in_external_nonphi_tool_args",
                 started=started,
             )
-            return _error("phi_in_cloudflare_tool_args")
+            return _error("phi_in_external_nonphi_tool_args")
 
         spec = self.settings.allowlist.callers.get(caller.name)
         if spec is None or (spec.allowed_tools and name not in spec.allowed_tools):
@@ -484,10 +484,10 @@ def _sensitive(counts: dict[str, int]) -> bool:
 def _result_is_non_baa(caller: CallerIdentity, baa_client_ids: frozenset[str]) -> bool:
     """True when a masked PHI result must not be returned.
 
-    Cloudflare ingress is never a BAA path. Under APIM the Entra client id
+    The external-nonphi mark is never a BAA path. Under APIM the Entra client id
     (azp/appid) must be on the BAA allowlist. phi_capable is not sufficient.
     """
-    if caller.ingress == "cloudflare":
+    if caller.ingress == "external-nonphi":
         return True
     if caller.authn == "entra":
         client_id = (caller.client_id or "").lower()

@@ -28,8 +28,6 @@ class CallerSecret:
     phi_capable: bool
     allowed_ingress: frozenset[str]
     token_sha256: bytes
-    cf_client_id_sha256: bytes | None = None
-    cf_client_secret_sha256: bytes | None = None
 
 
 def digest(value: str) -> bytes:
@@ -73,7 +71,7 @@ def authenticate(
         raise AuthError("invalid_token")
     if ingress not in matched.allowed_ingress:
         raise AuthError("ingress_not_allowed")
-    # Lab bearer is the VPN listener only. Cloudflare is a policy mark, not a door.
+    # Lab bearer is the VPN listener only. external-nonphi is a policy mark, not a door.
     if ingress != "vpn":
         raise AuthError("ingress_not_allowed")
     return CallerIdentity(

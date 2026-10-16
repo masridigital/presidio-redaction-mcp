@@ -12,8 +12,8 @@ This VM is the Yellow lane only. It does not run Open WebUI or LiteLLM. Those ap
 
 | App | Venv | User (nologin) | Listen |
 |---|---|---|---|
-| Presidio analyzer | `/opt/presidio-analyzer/venv` | `presidio-analyzer` | `127.0.0.1:3000` HTTP, gunicorn |
-| Presidio anonymizer | `/opt/presidio-anonymizer/venv` | `presidio-anonymizer` | `127.0.0.1:3001` HTTP, gunicorn |
+| Presidio analyzer | `/opt/presidio-analyzer/venv` | `presidio-analyzer` | `127.0.0.1:5001` HTTP, `python -m presidio.serve` |
+| Presidio anonymizer | `/opt/presidio-anonymizer/venv` | `presidio-anonymizer` | `127.0.0.1:5002` HTTP, stdlib `app.py`, unit not enabled |
 | Redaction proxy | `/opt/presidio-redaction-mcp/venv` | `presidio-proxy` | VPN address `:8444`, TLS |
 
 WireGuard comes from apt, not from a venv. There is no cloudflared package and no Cloudflare listener. Nginx from apt terminates TLS for Presidio on `127.0.0.1:443` with `server_name presidio-tls`, so the allowlist URLs `https://presidio-tls/analyze` and `https://presidio-tls/anonymize` stay unchanged. `/etc/hosts` maps `presidio-tls` to `127.0.0.1`. Production start requires `PRM_AUTH_MODE=entra`. The VPN bearer listener is lab-only.
@@ -39,12 +39,7 @@ Install with `pip install --require-hashes`. A requirements file without hashes 
 
 The model is the wheel `en_core_web_lg-3.8.0-py3-none-any.whl` from the `en_core_web_lg-3.8.0` GitHub release. `python -m spacy download` is not the install. That command floats.
 
-The analyzer and anonymizer HTTP apps are `app.py` and `logging.ini` from the `microsoft/presidio` tag `2.2.362` (`presidio-analyzer/` and `presidio-anonymizer/`). They are not inside the wheels. Copy those two files from that tag into `/opt/presidio-analyzer` and `/opt/presidio-anonymizer`. Do not start `python app.py`: that path binds `0.0.0.0`. The unit starts gunicorn on loopback:
-
-```
-/opt/presidio-analyzer/venv/bin/gunicorn -w 1 -b 127.0.0.1:3000 "app:create_app()"
-/opt/presidio-anonymizer/venv/bin/gunicorn -w 1 -b 127.0.0.1:3001 "app:create_app()"
-```
+The analyzer HTTP app is `deploy/presidio/serve.py`. The unit starts it as `python -m presidio.serve` on `127.0.0.1` with `PRESIDIO_PORT` 5001. The anonymizer HTTP app is `deploy/presidio-anonymizer/app.py`. The installer copies that file to `/opt/presidio-anonymizer/app.py`. The unit runs it with the venv interpreter. It binds `PRESIDIO_BIND` (default `127.0.0.1`) and `PRESIDIO_PORT` (default 5002) and refuses `0.0.0.0`. Azure keeps the anonymizer image on port 3001. The native unit stays disabled.
 
 The proxy pin is the version in `pyproject.toml`, installed from this repo into its venv:
 
@@ -137,9 +132,9 @@ SystemCallArchitectures=native
 WantedBy=multi-user.target
 ```
 
-`%d` is the systemd credentials directory. The analyzer unit uses the same hardening block. The optional anonymizer unit uses gunicorn on `127.0.0.1:3001` and `ConditionPathExists=/opt/presidio-anonymizer/app.py`. The installer does not enable that unit. The anonymizer that runs in Azure is the digest-pinned image. A `python -c` process that exits 0 is not a server. The TLS front is nginx from apt, bound to `127.0.0.1:443`, proxying `/analyze` to `127.0.0.1:3000` and `/anonymize` to `127.0.0.1:3001`, certificates from the same `/etc/presidio-redaction-mcp/` files.
+`%d` is the systemd credentials directory. The analyzer unit uses the same hardening block. The optional anonymizer unit runs `/opt/presidio-anonymizer/venv/bin/python /opt/presidio-anonymizer/app.py` with `PRESIDIO_PORT=5002` and `ConditionPathExists=/opt/presidio-anonymizer/app.py`. The installer copies that file and does not enable the unit. The anonymizer that runs in Azure is the digest-pinned image on port 3001. A `python -c` process that exits 0 is not a server. The TLS front is nginx from apt, bound to `127.0.0.1:443`, proxying `/analyze` to `127.0.0.1:5001` and `/anonymize` to `127.0.0.1:5002`, certificates from the same `/etc/presidio-redaction-mcp/` files.
 
-Install the units under `/etc/systemd/system/`, then `systemctl daemon-reload`. Enable the analyzer and the proxy. Leave `presidio-anonymizer.service` disabled unless `app.py` from tag 2.2.362 is present. Running the installer twice must leave the same users, modes, pins, and units (idempotent).
+Install the units under `/etc/systemd/system/`, then `systemctl daemon-reload`. Enable the analyzer and the proxy. Leave `presidio-anonymizer.service` disabled. Running the installer twice must leave the same users, modes, pins, and units (idempotent).
 
 ## Firewall
 

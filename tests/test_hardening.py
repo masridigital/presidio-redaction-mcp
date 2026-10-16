@@ -25,13 +25,17 @@ def test_cloudflared_artifacts_are_gone():
 
 def test_cloudflare_access_jwt_is_not_accepted(stack):
     assert not (ROOT / "src" / "presidio_redaction_mcp" / "access_jwt.py").exists()
-    with pytest.raises(AuthError) as cloudflare:
-        authenticate(
-            stack["runtime"].settings.callers,
-            ingress="cloudflare",
-            authorization=f"Bearer {SECRETS['grok_bot_token']}",
-        )
-    assert cloudflare.value.reason_code == "ingress_not_allowed"
+    example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    assert "CF_ACCESS" not in example
+    assert "cf_access_" not in (ROOT / "src" / "presidio_redaction_mcp" / "config.py").read_text(encoding="utf-8")
+    for ingress in ("cloudflare", "external-nonphi"):
+        with pytest.raises(AuthError) as cloudflare:
+            authenticate(
+                stack["runtime"].settings.callers,
+                ingress=ingress,
+                authorization=f"Bearer {SECRETS['grok_bot_token']}",
+            )
+        assert cloudflare.value.reason_code == "ingress_not_allowed"
     blob = stack["runtime"].audit.path.read_text(encoding="utf-8")
     assert "header.payload.signature" not in blob
     with pytest.raises(AuthError) as denied:

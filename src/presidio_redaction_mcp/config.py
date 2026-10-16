@@ -186,10 +186,8 @@ class CallerSpec(BaseModel):
     phi_capable: bool
     # Entra app ids of callers with baa true are the result-mask allowlist.
     baa: bool = False
-    allowed_ingress: list[Literal["cloudflare", "vpn"]]
+    allowed_ingress: list[Literal["external-nonphi", "vpn"]]
     token_secret: str
-    cf_access_client_id_secret: str | None = None
-    cf_access_client_secret_secret: str | None = None
     allowed_tools: list[str] = Field(default_factory=list)
     denied_result_fields: list[str] = Field(default_factory=list)
 
@@ -347,30 +345,24 @@ class AllowlistFile(BaseModel):
         if "grok-bot" not in self.callers or "claude-local" not in self.callers or "open-webui" not in self.callers:
             raise ValueError("required_caller_missing")
         grok = self.callers["grok-bot"]
-        if grok.phi_capable or grok.baa or grok.allowed_ingress != ["cloudflare"]:
-            raise ValueError("grok_bot_must_be_cloudflare_non_phi")
-        if grok.cf_access_client_id_secret or grok.cf_access_client_secret_secret:
-            raise ValueError("grok_bot_cf_service_token_forbidden")
+        if grok.phi_capable or grok.baa or grok.allowed_ingress != ["external-nonphi"]:
+            raise ValueError("grok_bot_must_be_external_nonphi")
         if set(grok.allowed_tools) != _GROK_TOOLS:
             raise ValueError("grok_bot_tools_must_be_structured")
         if not _GROK_DENIED_FIELDS <= set(grok.denied_result_fields):
             raise ValueError("grok_bot_free_text_fields_required")
         for caller in self.callers.values():
-            if "cloudflare" in caller.allowed_ingress and caller.phi_capable:
-                raise ValueError("cloudflare_ingress_cannot_be_phi_capable")
+            if "external-nonphi" in caller.allowed_ingress and caller.phi_capable:
+                raise ValueError("external_nonphi_cannot_be_phi_capable")
         claude = self.callers["claude-local"]
         if not claude.phi_capable or not claude.baa or claude.allowed_ingress != ["vpn"]:
             raise ValueError("phi_caller_must_be_vpn_only")
-        if claude.cf_access_client_id_secret or claude.cf_access_client_secret_secret:
-            raise ValueError("vpn_caller_must_not_bind_cf_token")
         if claude.allowed_tools or claude.denied_result_fields:
             raise ValueError("phi_caller_uses_the_shared_allowlist")
         webui = self.callers["open-webui"]
         # local-ai-stack has not cleared Open WebUI for PHI. Keep it non-BAA.
         if webui.phi_capable or webui.baa or webui.allowed_ingress != ["vpn"]:
             raise ValueError("open_webui_not_cleared_for_phi")
-        if webui.cf_access_client_id_secret or webui.cf_access_client_secret_secret:
-            raise ValueError("vpn_caller_must_not_bind_cf_token")
         if set(self.egress.upstream_hosts) != {"stackjack.invalid", "composio.invalid"}:
             raise ValueError("egress_upstreams_must_be_phase1_pins")
         if self.verifier.enabled and (self.deployment.target != "azure" or not self.deployment.baa):
@@ -455,8 +447,8 @@ def load_settings(config_path: Path, *, env: str | None = None) -> Settings:
     except Exception as exc:
         if "verifier_refused_non_baa_target" in str(exc):
             raise ConfigError("verifier_refused_non_baa_target") from exc
-        if "cloudflare_ingress_cannot_be_phi_capable" in str(exc):
-            raise ConfigError("cloudflare_ingress_cannot_be_phi_capable") from exc
+        if "external_nonphi_cannot_be_phi_capable" in str(exc):
+            raise ConfigError("external_nonphi_cannot_be_phi_capable") from exc
         raise ConfigError("allowlist_rejected") from exc
     assert_verifier_permitted(parsed)
     recognizer_path = config_path.parent / parsed.recognizers_file
@@ -556,10 +548,6 @@ def _secret_names(parsed: AllowlistFile) -> set[str]:
     names = {"audit_hmac_key"}
     for caller in parsed.callers.values():
         names.add(caller.token_secret)
-        if caller.cf_access_client_id_secret:
-            names.add(caller.cf_access_client_id_secret)
-        if caller.cf_access_client_secret_secret:
-            names.add(caller.cf_access_client_secret_secret)
     return names
 
 
@@ -644,15 +632,11 @@ def _tls_paths() -> tuple[str | None, str | None, str | None]:
 
 
 def _caller_secret(name: str, spec: CallerSpec, secrets: dict[str, str]) -> CallerSecret:
-    cf_id = secrets[spec.cf_access_client_id_secret] if spec.cf_access_client_id_secret else None
-    cf_secret = secrets[spec.cf_access_client_secret_secret] if spec.cf_access_client_secret_secret else None
     return CallerSecret(
         name=name,
         phi_capable=spec.phi_capable,
         allowed_ingress=frozenset(spec.allowed_ingress),
         token_sha256=digest(secrets[spec.token_secret]),
-        cf_client_id_sha256=digest(cf_id) if cf_id is not None else None,
-        cf_client_secret_sha256=digest(cf_secret) if cf_secret is not None else None,
     )
 
 

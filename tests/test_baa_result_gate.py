@@ -42,19 +42,19 @@ def test_open_webui_stays_non_phi_until_local_ai_stack_clears():
     assert raw["callers"]["claude-local"]["baa"] is True
 
 
-def test_cloudflare_ingress_cannot_be_phi_capable(tmp_path, monkeypatch):
+def test_external_nonphi_ingress_cannot_be_phi_capable(tmp_path, monkeypatch):
     raw = yaml.safe_load((ROOT / "config" / "allowlist.yaml").read_text(encoding="utf-8"))
     mutated = copy.deepcopy(raw)
     mutated["callers"]["edge-bot"] = {
         "phi_capable": True,
         "baa": False,
-        "allowed_ingress": ["cloudflare"],
+        "allowed_ingress": ["external-nonphi"],
         "token_secret": "edge_bot_token",
     }
     monkeypatch.setenv("PRM_SECRET_EDGE_BOT_TOKEN", SECRETS["grok_bot_token"][:-4] + "abcd")
     with pytest.raises(ConfigError) as caught:
         _load(tmp_path, monkeypatch, mutated)
-    assert caught.value.reason_code == "cloudflare_ingress_cannot_be_phi_capable"
+    assert caught.value.reason_code == "external_nonphi_cannot_be_phi_capable"
 
 
 def _phi_upstream():
@@ -64,7 +64,7 @@ def _phi_upstream():
     return stackjack, composio
 
 
-def test_cloudflare_ingress_blocks_a_phi_capable_result(tmp_path, monkeypatch):
+def test_external_nonphi_ingress_blocks_a_phi_capable_result(tmp_path, monkeypatch):
     stackjack, composio = _phi_upstream()
     double = PresidioDouble()
     runtime = build_test_runtime(
@@ -73,7 +73,7 @@ def test_cloudflare_ingress_blocks_a_phi_capable_result(tmp_path, monkeypatch):
         double.transport(),
         upstreams={"stackjack": stackjack, "composio": composio},
     )
-    caller = CallerIdentity(name="claude-local", phi_capable=True, ingress="cloudflare")
+    caller = CallerIdentity(name="claude-local", phi_capable=True, ingress="external-nonphi")
     try:
         text = asyncio.run(runtime.service.call_tool(caller, "stackjack_health_check", {"limit": 1}))
         assert "phi_in_non_baa_tool_result" in text

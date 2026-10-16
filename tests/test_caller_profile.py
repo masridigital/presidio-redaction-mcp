@@ -55,12 +55,12 @@ def test_ingress_matrix(stack, token, status, reason):
         assert "MRN-SYN-0001234" not in tool_text(response)
 
 
-def test_cloudflare_mark_has_no_listener(stack):
+def test_external_nonphi_mark_has_no_listener(stack):
     for token in (SECRETS["grok_bot_token"], SECRETS["claude_local_token"], SECRETS["open_webui_token"]):
         with pytest.raises(AuthError) as caught:
             authenticate(
                 stack["runtime"].settings.callers,
-                ingress="cloudflare",
+                ingress="external-nonphi",
                 authorization=f"Bearer {token}",
             )
         assert caught.value.reason_code == "ingress_not_allowed"
@@ -73,7 +73,7 @@ def test_cloudflare_phi_is_blocked_and_vpn_phi_is_masked(stack):
         "stackjack_search_docs",
         {"query": "Testy McFakerson MRN-SYN-0001234", "limit": 1},
     )
-    assert "phi_in_cloudflare_tool_args" in tool_text(blocked)
+    assert "phi_in_external_nonphi_tool_args" in tool_text(blocked)
     assert _calls(stack) == before
     assert "MRN-SYN-0001234" not in blocked.text
 
@@ -92,9 +92,9 @@ def test_cloudflare_phi_is_blocked_and_vpn_phi_is_masked(stack):
     assert rows[-1]["caller"] == "open-webui"
     assert rows[-1]["ingress"] == "vpn"
     assert rows[-1]["phi_capable"] is False
-    grok_rows = [row for row in rows if row["reason_code"] == "phi_in_cloudflare_tool_args"]
+    grok_rows = [row for row in rows if row["reason_code"] == "phi_in_external_nonphi_tool_args"]
     assert grok_rows[-1]["caller"] == "grok-bot"
-    assert grok_rows[-1]["ingress"] == "cloudflare"
+    assert grok_rows[-1]["ingress"] == "external-nonphi"
     assert grok_rows[-1]["phi_capable"] is False
 
 
@@ -128,7 +128,7 @@ def test_there_is_no_baa_switch_for_grok(tmp_path, monkeypatch):
     door["callers"]["grok-bot"]["allowed_ingress"] = ["vpn"]
     cases.append(door)
     both = copy.deepcopy(raw)
-    both["callers"]["claude-local"]["allowed_ingress"] = ["cloudflare"]
+    both["callers"]["claude-local"]["allowed_ingress"] = ["external-nonphi"]
     cases.append(both)
     flag = copy.deepcopy(raw)
     flag["callers"]["grok-bot"]["baa"] = True

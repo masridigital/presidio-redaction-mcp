@@ -44,7 +44,7 @@
     <choose>
       <when condition="@(context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;,&quot;&quot;).AsJwt()?.Claims.GetValueOrDefault(&quot;roles&quot;, new string[]{}).Contains(&quot;Phi.Caller&quot;) == true)">
         <choose>
-          <when condition="@(context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;,&quot;&quot;).AsJwt()?.Claims.GetValueOrDefault(&quot;scp&quot;, new string[]{}).Contains(&quot;access_as_user&quot;) != true)">
+          <when condition="@(!((context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;,&quot;&quot;).AsJwt()?.Claims.GetValueOrDefault(&quot;scp&quot;, new string[0]) ?? new string[0]).SelectMany(scope =&gt; scope.Split(' ')).Contains(&quot;access_as_user&quot;)))">
             <return-response>
               <set-status code="401" reason="scope_missing" />
               <set-body>{"error":"unauthorized","reason_code":"scope_missing"}</set-body>

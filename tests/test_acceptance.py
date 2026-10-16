@@ -239,7 +239,7 @@ def test_06_missing_invalid_and_wrong_assistant_tokens_are_401(stack):
         with pytest.raises(AuthError) as caught:
             authenticate(
                 stack["runtime"].settings.callers,
-                ingress="cloudflare",
+                ingress="external-nonphi",
                 authorization=f"Bearer {token}",
             )
         assert caught.value.reason_code == "ingress_not_allowed"
@@ -295,7 +295,7 @@ def test_08_cloudflare_egress_bytes_are_redacted_and_upstream_is_not_tunneled(st
     for secret in _secrets():
         assert secret.encode() not in blob
     text = blob.decode("utf-8", errors="replace")
-    assert "<MRN>" in text or "phi_in_cloudflare_tool_args" in text
+    assert "<MRN>" in text or "phi_in_external_nonphi_tool_args" in text
     for call in stack["runtime"].upstreams["stackjack"].calls + stack["runtime"].upstreams["composio"].calls:
         assert call.via == "direct"
         assert "cloudflare" not in call.base_url
@@ -320,7 +320,7 @@ def test_grok_phi_in_args_never_reaches_upstream(stack):
         "stackjack_search_docs",
         {"query": "Testy McFakerson MRN-SYN-0001234", "limit": 1},
     )
-    assert "phi_in_cloudflare_tool_args" in tool_text(response)
+    assert "phi_in_external_nonphi_tool_args" in tool_text(response)
     assert len(stack["runtime"].upstreams["stackjack"].calls) == before
     assert "MRN-SYN-0001234" not in response.text
 
