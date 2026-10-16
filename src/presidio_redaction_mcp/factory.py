@@ -42,6 +42,7 @@ def build_runtime(
     anthropic_api_key: str | None = None,
     verifier_transport: httpx.AsyncBaseTransport | None = None,
     entra: EntraTokenVerifier | None = None,
+    published_tools: frozenset[str] | None = None,
 ) -> Runtime:
     presidio = PresidioClient(
         analyzer_url=settings.allowlist.presidio.analyzer_url,
@@ -89,6 +90,7 @@ def build_runtime(
         upstreams=upstreams,
         rate_limiter=rate_limiter,
         verifier=verifier,
+        published_tools=published_tools,
     )
     listeners = settings.allowlist.listeners
     _reject_testserver(listeners.vpn_allowed_hosts)

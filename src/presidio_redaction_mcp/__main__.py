@@ -9,16 +9,49 @@ from pathlib import Path
 import uvicorn
 
 from presidio_redaction_mcp.audit import AuditLog
-from presidio_redaction_mcp.config import load_settings
+from presidio_redaction_mcp.config import assert_published_store, load_settings
 from presidio_redaction_mcp.factory import build_runtime
 from presidio_redaction_mcp.key_vault import resolve_verifier_key
 from presidio_redaction_mcp.logging_setup import configure_logging
+from presidio_redaction_mcp.published_config import log_published
+from presidio_admin.errors import ConfigRejected
+from presidio_admin.floor import BlobVersionFloor, LocalVersionFloor, NullFloor
+from presidio_admin.key_vault import signer_from_env
 
 
 def main() -> None:
     config_path = Path(os.environ.get("PRM_CONFIG", "/etc/presidio-redaction-mcp/allowlist.yaml"))
     settings = load_settings(config_path)
+    published_tools: frozenset[str] | None = None
+    published = None
+    store_dir = os.environ.get("PRM_CONFIG_STORE")
+    from presidio_redaction_mcp.errors import ConfigError
+
+    try:
+        assert_published_store(settings, store_dir)
+    except ConfigError:
+        raise SystemExit(1) from None
+    if store_dir:
+        from presidio_redaction_mcp.published_config import apply_published, load_published_or_fail
+
+        if (settings.env == "production" or settings.auth_mode == "entra") and not os.environ.get("PRM_VERSION_FLOOR"):
+            raise SystemExit(1)
+        try:
+            verifier = signer_from_env(allow_sign=False)
+            floor = _floor(os.environ.get("PRM_VERSION_FLOOR", ""), store_dir)
+            published = load_published_or_fail(
+                store_dir,
+                verifier=verifier,
+                floor=floor,
+                env=settings.env,
+            )
+            settings = apply_published(settings, published)
+        except (ConfigError, ConfigRejected):
+            raise SystemExit(1) from None
+        published_tools = frozenset(published.config.enabled_tools())
     configure_logging(settings.recognizers, os.environ.get("LOG_LEVEL", "INFO"), settings.secret_values)
+    if published is not None:
+        log_published(published.version_id, published.sha256)
     audit = AuditLog(
         Path(os.environ.get("PRM_AUDIT_PATH", "/var/lib/presidio-redaction-mcp/audit/audit.jsonl")),
         Path(os.environ.get("PRM_AUDIT_STATE", "/var/lib/presidio-redaction-mcp/audit/config-sha")),
@@ -26,7 +59,12 @@ def main() -> None:
         forward=settings.audit_forward,
     )
     api_key = resolve_verifier_key(settings) if settings.allowlist.verifier.enabled else None
-    runtime = build_runtime(settings, audit, anthropic_api_key=api_key)
+    runtime = build_runtime(
+        settings,
+        audit,
+        anthropic_api_key=api_key,
+        published_tools=published_tools,
+    )
     if settings.env == "production" and settings.auth_mode != "entra":
         raise SystemExit(1)
     if settings.auth_mode == "entra":
@@ -70,6 +108,21 @@ def _serve_lab(runtime: object, settings: object) -> None:
         await vpn_server.serve()
 
     asyncio.run(serve())
+
+
+def _floor(location: str, store_dir: str) -> object:
+    if not location:
+        return NullFloor()
+    if location.startswith("https://"):
+        from presidio_admin.proxy_loader import _blob_token_provider
+
+        floor: object = BlobVersionFloor(location, token_provider=_blob_token_provider())
+    else:
+        floor = LocalVersionFloor(Path(location))
+    from presidio_admin.floor import floor_separated
+
+    floor_separated(store_dir, floor)
+    return floor
 
 
 if __name__ == "__main__":

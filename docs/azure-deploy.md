@@ -34,6 +34,10 @@ API Management runs `infra/apim-policy.xml`: `validate-azure-ad-token` for the t
 
 Key Vault holds secrets. The app identity has Secrets User (`4633458b-17de-408a-b874-0445c86b69e6`). No secret values are in the template.
 
+## Pre-PHI checklist
+
+Before a PHI client is enabled, lock the immutability policies on `prm-config` and `prm-floor` after the soak. The commands and the recovery for a junk version file are in `docs/signing-key-rotation.md`.
+
 ## Not in this change
 
 Do not run a deployment from this branch. Zitadel is not in the template. See `docs/auth-fallback.md`.

@@ -22,6 +22,15 @@ param openWebUiClientId string
 @description('Pre-registered Grok Bot application id. NonPhi.Caller only.')
 param grokClientId string
 
+@description('Blob URL of the published admin config. Required when require_published_config is true.')
+param configStoreUrl string
+
+@description('Key Vault key URL. The proxy verifies with this key and cannot sign.')
+param signingKeyUrl string
+
+@description('Append-blob container for the version floor. Not the config container.')
+param versionFloorUrl string
+
 @description('Digest-pinned proxy image. A floating tag is not accepted.')
 param containerImage string
 
@@ -197,6 +206,42 @@ resource law 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
     retentionInDays: 90
     features: {
       enableLogAccessUsingOnlyResourcePermissions: true
+    }
+  }
+}
+
+// Fires when the proxy logs alert reason_code=store_signature_invalid.
+resource storeSignatureAlert 'Microsoft.Insights/scheduledQueryRules@2023-12-01' = {
+  name: '${namePrefix}-store-signature-invalid'
+  location: location
+  properties: {
+    displayName: 'Config store signature invalid'
+    description: 'The proxy refused a published config because the signature did not verify.'
+    severity: 1
+    enabled: true
+    evaluationFrequency: 'PT5M'
+    scopes: [
+      law.id
+    ]
+    windowSize: 'PT15M'
+    skipQueryValidation: true
+    autoMitigate: false
+    criteria: {
+      allOf: [
+        {
+          query: 'ContainerAppConsoleLogs | where Log contains "store_signature_invalid"'
+          timeAggregation: 'Count'
+          operator: 'GreaterThan'
+          threshold: 0
+          failingPeriods: {
+            numberOfEvaluationPeriods: 1
+            minFailingPeriodsToAlert: 1
+          }
+        }
+      ]
+    }
+    actions: {
+      actionGroups: []
     }
   }
 }
@@ -429,6 +474,18 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'PRM_ENTRA_CLIENT_GROK'
               value: grokClientId
+            }
+            {
+              name: 'PRM_CONFIG_STORE'
+              value: configStoreUrl
+            }
+            {
+              name: 'PRM_SIGNING_KEY_URL'
+              value: signingKeyUrl
+            }
+            {
+              name: 'PRM_VERSION_FLOOR'
+              value: versionFloorUrl
             }
           ]
         }

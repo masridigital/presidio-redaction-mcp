@@ -22,6 +22,7 @@ from presidio_redaction_mcp.auth import CallerIdentity, authenticate
 from presidio_redaction_mcp.config import Settings, ToolSpec
 from presidio_redaction_mcp.entra import EntraTokenVerifier, protected_resource_metadata
 from presidio_redaction_mcp.errors import AuthError
+from presidio_redaction_mcp.published_config import log_published
 from presidio_redaction_mcp.service import RedactionService
 
 caller_var: ContextVar[CallerIdentity | None] = ContextVar("prm_caller", default=None)
@@ -80,7 +81,12 @@ def create_app(
 
     @contextlib.asynccontextmanager
     async def lifespan(_: Starlette) -> AsyncIterator[None]:
-        audit.note_config(settings.config_sha256)
+        log_published(settings.published_version_id, settings.published_sha256)
+        audit.note_config(
+            settings.config_sha256,
+            version_id=settings.published_version_id,
+            published_sha256=settings.published_sha256 or None,
+        )
         async with session_manager.run():
             yield
 
@@ -94,7 +100,11 @@ def create_app(
     )
 
     async def health(_: Any) -> JSONResponse:
-        return JSONResponse({"status": "ok"})
+        body: dict[str, Any] = {"status": "ok"}
+        if settings.published_version_id is not None:
+            body["version_id"] = settings.published_version_id
+            body["published_sha256"] = settings.published_sha256
+        return JSONResponse(body)
 
     async def metadata(_: Any) -> JSONResponse:
         return JSONResponse(protected_resource_metadata(resource=settings.entra_audience or "presidio-redaction-mcp"))

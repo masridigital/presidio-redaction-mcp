@@ -46,3 +46,50 @@ Each line is a deferral. This PR does not claim the rest of the Cloudflare or Mi
 | Pinned tool-description hashes and stripping instructions from upstream results | [MCP tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools) (annotations are untrusted) | Kept from Phase 1 (PR #4). `description_sha256`, `strip_instructions`, and `scrub_secrets` still run. This PR does not replace them. |
 | Rate limits | [MCP tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools) | Kept from Phase 1 (PR #4). `RateLimiter` still denies with `rate_limited` before another upstream call. |
 | Hash-locked requirements and SHA-pinned GitHub Actions | Cap native-install directive | Kept from main. CI installs with `--require-hashes` and SHA-pinned actions, including the `presidio-native` job. This PR does not replace that workflow. |
+
+## Admin portal
+
+The portal publishes the proxy's runtime config. It does not sit on the PHI path. Ingress is an internal Container Apps environment. The proxy and the portal both refuse a document that is unsigned, rolled back, or missing an approver on a risky change.
+
+### Who holds Admin
+
+The `Admin` app role is granted through one Entra group of named accounts. Membership is reviewed every quarter. A proposal records the proposer's object id and the domain of `preferred_username` or `upn`. Approval requires a different object id. Two sessions of the same person are still the same object id, so they cannot approve each other.
+
+A sealed break-glass account exists outside that group. It is stored sealed, reviewed after every use, and its sign-in alerts Chief and Cap. No code path skips two-person approval. Break-glass is an identity of last resort, not a bypass of the store checks.
+
+### What is signed
+
+Every version, proposal, the active pointer, and the admin audit chain is RSA-PSS SHA-256 (PS256). Key Vault generates the key `prm-config-signing`. The proxy holds a verify-only role and verifies with the public key. It cannot sign, so it cannot forge a snapshot. See `docs/signing-key-rotation.md`.
+
+The proxy verifies the signature, recomputes risk flags against the previous signed version (version 1 against the default-deny document), and requires an approver object id that is not the actor when the flags are risky. A NonPHI client flipped to PHI is one of those flags. The active hash must appear on a verified audit row whose action is `bootstrap`, `publish`, or `approve`. A version number that does not increase is rejected.
+
+A second control sits outside the store writer. Blob versioning is on. The immutability policies are created unlocked, with protected append writes allowed, and are locked after a soak (see `docs/signing-key-rotation.md`). Locking both policies after that soak is a pre-PHI checklist item: a PHI client stays disabled until the policies are locked. A junk or unsigned version file under the lock is recovered with a new container and a re-publish, in the same doc. The proxy workspace alerts on `store_signature_invalid`. Version files are write-once. The active config is the highest verified version, so nothing rewrites a pointer blob. The audit log is an append blob. Proposal decisions are new blobs. The proxy records the highest `version_id` it has loaded in `prm-floor`, an append blob the portal identity cannot write. A signed snapshot whose version is below that floor is rejected as `snapshot_replay`. Production and Entra mode refuse to start without `PRM_VERSION_FLOOR`. In production, a missing floor after more than one version has been published is also refused.
+
+The session cookie key is created in Key Vault on first portal start (`session-hmac-key`). The portal's secret role is conditional on that secret name. It is not a deployment parameter. The proxy's tool-call audit log stays a separate HMAC. The approver page shows the metadata diff and both hashes before approve.
+
+Writes take a lease (`lease` on disk, a blob lease on `writer.lock` in Azure). That is safe for one replica. `maxReplicas` stays 1 until that lease is the only writer. Scaling past one replica without it can split the chain. The floor append uses `x-ms-blob-condition-appendpos` and retries when two proxy replicas append together.
+
+### Identity, not a secret
+
+The admin client has no client secret. Production uses the portal's user-assigned managed identity as a federated credential (`client_assertion`, audience `api://AzureADTokenExchange`). A certificate assertion (`private_key_jwt`, `x5t`) is the other accepted credential. The callback returns 503 when neither is configured.
+
+The config container is a private blob with `allowSharedKeyAccess: false`. Container Apps cannot mount Azure Files with a managed identity, so this template does not create a file share and does not call `listKeys()`. The portal identity can write `prm-config` only. The proxy identity reads that container and is the only writer of `prm-floor`.
+
+`require_published_config` defaults to true. Production forces the store even when the file says false. Entra mode requires it while the flag stays on. Startup and `/healthz` both report `version_id` and the published hash.
+
+The client list is enforced. A published client with app role `PHI` is a human PHI caller and is added to the BAA client set. `NonPHI` is a workload and is not. Entra mode with no enabled client fails closed. The verifier toggle is enforced on `allowlist.verifier.enabled` and stays off unless a published version turns it on, and only when the deployment is Azure and marked BAA. Turning it off still needs a second Admin.
+
+The session cookie requires `nbf`. It expires after 15 minutes without a request. A request refreshes that idle clock and does not rotate the CSRF token.
+
+### Citations for this section
+
+| Practice | Source | Where it lands |
+|---|---|---|
+| Workload identity federation, no client secret | [Workload identity federation](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation), [certificate credentials](https://learn.microsoft.com/en-us/entra/identity-platform/certificate-credentials) | `admin/presidio_admin/client_auth.py`, `infra/admin-portal.bicep` |
+| Managed identity for data access, shared keys off | [Authorize with Microsoft Entra ID](https://learn.microsoft.com/en-us/azure/storage/blobs/authorize-access-azure-active-directory), [Prevent shared key](https://learn.microsoft.com/en-us/azure/storage/common/shared-key-authorization-prevent) | `allowSharedKeyAccess: false`, blob data-plane calls with a bearer token |
+| Azure Files identity mount is not available on Container Apps | [Storage mounts](https://learn.microsoft.com/en-us/azure/container-apps/storage-mounts-azure-files) | Blob container instead of a file share. No `listKeys()` in the portal template |
+| App role via a group, least privilege | [App roles](https://learn.microsoft.com/en-us/entra/identity-platform/howto-add-app-roles-in-apps), [Conditional Access](https://learn.microsoft.com/en-us/entra/identity/conditional-access/concept-conditional-access-cloud-apps) | `Admin` group of named accounts, `amr` and `acrs` checks |
+| Break-glass account | [Emergency access](https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/security-emergency-access) | Sealed account. Sign-in alerts Chief and Cap. Approval code does not special-case it |
+| Blob lease and ETag | [Blob leases](https://learn.microsoft.com/en-us/rest/api/storageservices/lease-blob), [conditional headers](https://learn.microsoft.com/en-us/rest/api/storageservices/specifying-conditional-headers-for-blob-service-operations) | `documents.py`. `maxReplicas: 1` until the lease is the only writer |
+| Asymmetric sign, verify-only proxy | [Key Vault sign](https://learn.microsoft.com/en-us/rest/api/keyvault/keys/sign/sign) | `signing.py`, `key_vault.py`. Portal `keys/sign/action`. Proxy `keys/verify/action` |
+| Blob versioning and immutability | [Versioning](https://learn.microsoft.com/en-us/azure/storage/blobs/versioning-overview), [immutability policies](https://learn.microsoft.com/en-us/azure/storage/blobs/immutable-storage-overview) | Write-once versions, append-only audit, unlocked 365-day policies, `prm-floor` outside the store writer. Pre-PHI checklist locks the policies after the soak |

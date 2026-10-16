@@ -13,8 +13,12 @@ paths = [
 regexes = [
   '''replace-with-vault''',
   '''ca_day1_uptimerobot_nonphi_ro''',
-  # Public Azure built-in role definition id for Key Vault Secrets User. Not a credential.
+  # Public Azure role definition ids, not credentials.
   '''4633458b-17de-408a-b874-0445c86b69e6''',
+  '''b86a8fe4-44ce-4948-aee5-eccb2c155cd7''',
+  '''ba92f5b4-2d11-453d-a403-e96b0029c9fe''',
+  '''2a2b9908-6ea1-4ae2-8e65-a410df84e7d1''',
+  '''14b46e9e-c2b7-41b4-b545-8d5e335c5e6a''',
   # Public Azure built-in role definition id for AcrPull. Not a credential.
   '''7f951dda-4ed3-4680-a7ca-43fe172d538d''',
 ]

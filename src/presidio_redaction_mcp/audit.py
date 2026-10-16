@@ -36,23 +36,33 @@ class AuditLog:
             self.path.chmod(0o600)
         self._prev = self._tail_hash()
 
-    def note_config(self, config_sha256: str) -> None:
+    def note_config(
+        self,
+        config_sha256: str,
+        *,
+        version_id: int | None = None,
+        published_sha256: str | None = None,
+    ) -> None:
+        marker = config_sha256 if version_id is None else f"{config_sha256}:{version_id}:{published_sha256 or ''}"
         previous = None
         if self.state_path.exists():
             previous = self.state_path.read_text(encoding="utf-8").strip() or None
-        if previous != config_sha256:
-            self._write(
-                {
-                    "event": "config_change",
-                    "caller": "process",
-                    "decision": "recorded",
-                    "reason_code": "config_loaded",
-                    "previous_config_sha256": previous,
-                    "config_sha256": config_sha256,
-                }
-            )
+        if previous != marker:
+            row: dict[str, Any] = {
+                "event": "config_change",
+                "caller": "process",
+                "decision": "recorded",
+                "reason_code": "config_loaded",
+                "previous_config_sha256": previous,
+                "config_sha256": config_sha256,
+            }
+            if version_id is not None:
+                row["version_id"] = version_id
+            if published_sha256:
+                row["published_sha256"] = published_sha256
+            self._write(row)
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            self.state_path.write_text(config_sha256 + "\n", encoding="utf-8")
+            self.state_path.write_text(marker + "\n", encoding="utf-8")
             self.state_path.chmod(0o600)
 
     def record(
