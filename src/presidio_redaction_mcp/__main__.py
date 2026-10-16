@@ -11,6 +11,7 @@ import uvicorn
 from presidio_redaction_mcp.audit import AuditLog
 from presidio_redaction_mcp.config import load_settings
 from presidio_redaction_mcp.factory import build_runtime
+from presidio_redaction_mcp.key_vault import resolve_verifier_key
 from presidio_redaction_mcp.logging_setup import configure_logging
 
 
@@ -22,7 +23,8 @@ def main() -> None:
         Path(os.environ.get("PRM_AUDIT_PATH", "/var/lib/presidio-redaction-mcp/audit/audit.jsonl")),
         Path(os.environ.get("PRM_AUDIT_STATE", "/var/lib/presidio-redaction-mcp/audit/config-sha")),
     )
-    runtime = build_runtime(settings, audit)
+    api_key = resolve_verifier_key(settings) if settings.allowlist.verifier.enabled else None
+    runtime = build_runtime(settings, audit, anthropic_api_key=api_key)
     bind_host = os.environ.get("PRM_BIND_HOST", "127.0.0.1")
     vpn_host = os.environ.get("PRM_VPN_BIND_HOST", bind_host)
     cf_port = int(os.environ.get("PRM_CF_PORT", "8443"))

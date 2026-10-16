@@ -22,9 +22,11 @@ SECRET = "MRN-SYN-0001234"
 
 # Reason codes the proxy can raise. The source scan below must match this set.
 COVERED = {
+    "anthropic_key_missing",
     "payload_too_large",
     "pii_in_key",
     "presidio_anonymizer_ineffective",
+    "presidio_flagged",
     "presidio_http_error",
     "presidio_malformed",
     "presidio_must_be_https",
@@ -36,6 +38,12 @@ COVERED = {
     "unmaskable_scalar",
     "upstream_stream_interrupted",
     "upstream_via_cloudflare",
+    "verifier_echo",
+    "verifier_http_error",
+    "verifier_instruction_override",
+    "verifier_malformed",
+    "verifier_timeout",
+    "verifier_unreachable",
 }
 
 

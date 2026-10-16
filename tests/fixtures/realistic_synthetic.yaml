@@ -1,0 +1,22 @@
+# SYNTHETIC — FAKE DATA — NOT REAL PERSONS
+header: SYNTHETIC
+banner: SYNTHETIC — FAKE DATA — NOT REAL PERSONS
+cases:
+  - entity: US_SSN
+    value: "000-45-6789"
+  - entity: PHONE_NUMBER
+    value: "(555) 019-0142"
+  - entity: DATE_OF_BIRTH
+    value: "01/15/1900"
+  - entity: MRN
+    value: "MRN: 00482137"
+  - entity: EMAIL_ADDRESS
+    value: "a.synthetic@example.net"
+  - entity: NPI
+    value: "1245319599"
+  - entity: LOCATION
+    value: "500 Synthetic Ave, Faketown, ZZ 00000"
+  - entity: PERSON
+    value: "Alex Placeholder"
+negatives:
+  - "monitor interval 60 status operational"

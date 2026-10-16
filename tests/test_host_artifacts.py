@@ -22,10 +22,9 @@ def test_ufw_policy_has_no_public_inbound_and_denies_outbound():
     assert "0.0.0.0/0" not in printed
     assert "8443" not in printed
     assert "8444" not in printed
-    rules = (ROOT / "deploy" / "ufw" / "docker-user.rules").read_text(encoding="utf-8")
-    assert "DOCKER-USER" in rules
-    assert "-j DROP" in rules
-    assert "ESTABLISHED,RELATED" in rules
+    installer = (ROOT / "deploy" / "install.sh").read_text(encoding="utf-8")
+    assert "docker.io" not in installer
+    assert "DOCKER-USER" not in installer
 
 
 def test_install_sh_is_idempotent(tmp_path: Path):
@@ -34,7 +33,7 @@ def test_install_sh_is_idempotent(tmp_path: Path):
         "PRM_INSTALL_ROOT": str(tmp_path),
         "PRM_SKIP_APT": "1",
         "PRM_SKIP_UFW": "1",
-        "PRM_SKIP_DOCKER": "1",
+        "PRM_SKIP_VENV": "1",
         "PRM_SKIP_SYSTEMD": "1",
     }
     script = str(ROOT / "deploy" / "install.sh")
@@ -44,15 +43,26 @@ def test_install_sh_is_idempotent(tmp_path: Path):
     assert audit.is_dir()
     mode = stat.S_IMODE(audit.stat().st_mode)
     assert mode == 0o700
-    env_file = tmp_path / "etc" / "presidio-redaction-mcp" / "compose.env"
+    env_file = tmp_path / "etc" / "presidio-redaction-mcp" / "presidio-redaction-mcp.env"
     assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
-    assert "PRM_ENV=production" in env_file.read_text(encoding="utf-8")
+    text = env_file.read_text(encoding="utf-8")
+    assert "PRM_ENV=production" in text
+    assert "PRM_BIND_HOST=127.0.0.1" in text
+    assert "API_KEY=" not in text
     unit = (tmp_path / "etc" / "systemd" / "system" / "presidio-redaction-mcp.service").read_text(
         encoding="utf-8"
     )
     assert "Restart=on-failure" in unit
-    assert "cloudflared.service" in unit
-    assert "docker.service" in unit
+    assert "ProtectSystem=strict" in unit
+    assert "NoNewPrivileges=yes" in unit
+    assert "CapabilityBoundingSet=" in unit
+    assert "docker.service" not in unit
+    analyzer_unit = (
+        tmp_path / "etc" / "systemd" / "system" / "presidio-analyzer.service"
+    ).read_text(encoding="utf-8")
+    assert "presidio.serve" in analyzer_unit
+    assert "PRESIDIO_BIND=127.0.0.1" in analyzer_unit
+    assert "PRESIDIO_PORT=3000" in analyzer_unit
 
 
 def test_compose_builds_the_custom_analyzer_and_publishes_no_presidio_ports():
@@ -91,7 +101,23 @@ def test_compose_builds_the_custom_analyzer_and_publishes_no_presidio_ports():
     assert "mcr.microsoft.com/presidio-analyzer is deprecated" in unit
 
 
-def test_systemd_unit_restarts_on_failure():
+def test_systemd_unit_is_native_and_hardened():
     unit = (ROOT / "deploy" / "systemd" / "presidio-redaction-mcp.service").read_text(encoding="utf-8")
     assert "Restart=on-failure" in unit
-    assert "After=docker.service network-online.target cloudflared.service" in unit
+    assert "ProtectSystem=strict" in unit
+    assert "NoNewPrivileges=yes" in unit
+    assert "PrivateTmp=yes" in unit
+    assert "CapabilityBoundingSet=" in unit
+    assert "User=presidio-proxy" in unit
+    assert "docker.service" not in unit
+    assert "docker compose" not in unit.lower()
+    assert "deploy/presidio/Dockerfile" in unit
+    assert "mcr.microsoft.com/presidio-analyzer is deprecated" in unit
+    role = (ROOT / "deploy" / "ansible" / "roles" / "presidio_redaction_mcp" / "tasks" / "main.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "ufw default deny incoming" in role
+    assert "ufw default deny outgoing" in role
+    assert "presidio-proxy" in role
+    assert "docker" not in role.lower()
+    assert "mode: \"0600\"" in role

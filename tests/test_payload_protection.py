@@ -175,6 +175,46 @@ def test_secrets_never_reach_payloads_audit_or_logs(tmp_path, monkeypatch, caplo
         asyncio.run(runtime.presidio.aclose())
 
 
+def test_non_baa_caller_result_is_blocked_not_masked_with_verifier_off(tmp_path, monkeypatch):
+    """Default path: a non-BAA caller does not receive a masked tool result."""
+    stackjack = MockUpstream(name="stackjack", base_url="https://stackjack.invalid/mcp")
+    stackjack.result_body = {"status": "operational", "summary": "record MRN-SYN-0001234"}
+    composio = MockUpstream(name="composio", base_url="https://composio.invalid/mcp")
+    runtime = _runtime(
+        tmp_path,
+        monkeypatch,
+        upstreams={"stackjack": stackjack, "composio": composio},
+    )
+    phi_caller = CallerIdentity(name="claude-local", phi_capable=True, ingress="vpn")
+    try:
+        assert runtime.verifier is None
+        assert runtime.settings.allowlist.verifier.enabled is False
+        blocked = asyncio.run(runtime.service.call_tool(CALLER, "stackjack_health_check", {"limit": 1}))
+        assert "phi_in_non_baa_tool_result" in blocked
+        assert "MRN-SYN-0001234" not in blocked
+        assert "<MRN>" not in blocked
+        assert "operational" not in blocked
+        rows = [row for row in runtime.audit.rows() if row["event"] == "tool_call"]
+        assert rows[-1]["decision"] == "block"
+        assert rows[-1]["reason_code"] == "phi_in_non_baa_tool_result"
+        assert rows[-1]["phi_capable"] is False
+        assert "MRN-SYN-0001234" not in runtime.audit.path.read_text(encoding="utf-8")
+
+        stackjack.result_body = {"status": "operational", "summary": "queue healthy"}
+        allowed = asyncio.run(runtime.service.call_tool(CALLER, "stackjack_health_check", {"limit": 1}))
+        assert "operational" in allowed
+        assert "queue healthy" in allowed
+        assert "phi_in_non_baa_tool_result" not in allowed
+
+        stackjack.result_body = {"status": "operational", "summary": "record MRN-SYN-0001234"}
+        masked = asyncio.run(runtime.service.call_tool(phi_caller, "stackjack_health_check", {"limit": 1}))
+        assert "<MRN>" in masked
+        assert "MRN-SYN-0001234" not in masked
+        assert "phi_in_non_baa_tool_result" not in masked
+    finally:
+        asyncio.run(runtime.presidio.aclose())
+
+
 def test_rate_limit_denies_without_another_upstream_call(tmp_path, monkeypatch):
     now = {"t": 1_000.0}
 

@@ -1,0 +1,73 @@
+---
+# Mirrors deploy/install.sh. Native venv and systemd. No container runtime.
+- name: Config and data directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0700"
+    owner: root
+    group: root
+  loop:
+    - /etc/presidio-redaction-mcp
+    - /var/lib/presidio-analyzer
+    - /var/lib/presidio-anonymizer
+    - /var/lib/presidio-redaction-mcp
+    - /var/lib/presidio-redaction-mcp/audit
+    - /var/log/presidio-redaction-mcp
+
+- name: Non-login service users
+  ansible.builtin.user:
+    name: "{{ item }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+    home: /nonexistent
+  loop:
+    - presidio-analyzer
+    - presidio-anonymizer
+    - presidio-proxy
+
+- name: Non-secret environment file
+  ansible.builtin.copy:
+    dest: /etc/presidio-redaction-mcp/presidio-redaction-mcp.env
+    mode: "0600"
+    owner: root
+    group: root
+    force: false
+    content: |
+      PRM_ENV=production
+      LOG_LEVEL=INFO
+      PRM_CONFIG=/opt/presidio-redaction-mcp/config/allowlist.yaml
+      PRM_BIND_HOST=127.0.0.1
+      PRM_VPN_BIND_HOST=10.8.0.1
+      PRM_CF_PORT=8443
+      PRM_VPN_PORT=8444
+      PRM_AUDIT_PATH=/var/lib/presidio-redaction-mcp/audit/audit.jsonl
+      PRM_AUDIT_STATE=/var/lib/presidio-redaction-mcp/audit/config-sha
+
+- name: Hardened systemd units
+  ansible.builtin.copy:
+    src: "{{ repo_root | default('/opt/presidio-redaction-mcp') }}/deploy/systemd/{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop:
+    - presidio-analyzer.service
+    - presidio-anonymizer.service
+    - presidio-redaction-mcp.service
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: UFW default deny
+  ansible.builtin.command: "{{ item }}"
+  loop:
+    - ufw default deny incoming
+    - ufw default deny outgoing
+    - ufw allow in on lo
+    - ufw allow out on lo
+    - ufw allow out proto udp to any port 53
+    - ufw allow out proto tcp to any port 53
+    - ufw allow out proto udp to any port 123
+    - ufw deny out to any
+  changed_when: false
