@@ -9,23 +9,35 @@ recognizers:
       - name: mrn_spaced
         regex: '(?i)\bm\s*r\s*n\s*-\s*s\s*y\s*n\s*-\s*(?:\d\s*){7}'
         score: 0.85
+      - name: mrn_labeled
+        regex: '(?i)\b(?:medical\s+record\s+number|m\.r\.n\.|mrn|mr\s*#)[\s:#-]*\d{6,10}\b'
+        score: 0.9
   - name: synthetic_record
     entity: RECORD_ID
     patterns:
       - name: record_canonical
         regex: '\bREC-SYN-\d{6}\b'
         score: 0.95
+      - name: record_labeled
+        regex: '(?i)\b(?:record(?:\s+(?:id|number))?|rec)[\s:#-]*\d{5,12}\b'
+        score: 0.9
   - name: synthetic_account
     entity: ACCOUNT_ID
     patterns:
       - name: account_canonical
         regex: '\bACCT-SYN-\d{8}\b'
         score: 0.95
+      - name: account_labeled
+        regex: '(?i)\b(?:account(?:\s+(?:number|id|no))?|acct\.?)[\s:#-]*\d{6,17}\b'
+        score: 0.9
   - name: synthetic_npi
     entity: NPI
     patterns:
       - name: npi_canonical
         regex: '\bNPI-SYN-\d{10}\b'
+        score: 0.95
+      - name: npi_labeled
+        regex: '(?i)\bNPI[\s:#-]*\d{10}\b'
         score: 0.95
   - name: synthetic_ssn
     entity: US_SSN

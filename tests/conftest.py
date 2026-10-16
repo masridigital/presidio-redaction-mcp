@@ -32,7 +32,7 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         "http://presidio.test/analyze",
         "http://presidio.test/anonymize",
     )
-    configure_logging(settings.recognizers, "DEBUG")
+    configure_logging(settings.recognizers, "DEBUG", settings.secret_values)
     double = PresidioDouble()
     audit = AuditLog(tmp_path / "audit.jsonl", tmp_path / "config-sha")
     runtime = build_runtime(settings, audit, transport=double.transport())
@@ -89,3 +89,34 @@ def tool_text(response) -> str:
 
 def runtime_of(stack_map: dict) -> Runtime:
     return stack_map["runtime"]
+
+
+def apply_test_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PRM_ENV", "test")
+    for name, value in SECRETS.items():
+        monkeypatch.setenv(f"PRM_SECRET_{name.upper()}", value)
+
+
+def build_test_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    transport=None,
+    upstreams=None,
+    rate_limiter=None,
+):
+    """Runtime pointed at the in-test Presidio transport. Caller closes the HTTP client."""
+    apply_test_secrets(monkeypatch)
+    settings = with_presidio_urls(
+        load_settings(ROOT / "config" / "allowlist.yaml", env="test"),
+        "http://presidio.test/analyze",
+        "http://presidio.test/anonymize",
+    )
+    configure_logging(settings.recognizers, "DEBUG", settings.secret_values)
+    audit = AuditLog(tmp_path / "audit.jsonl", tmp_path / "config-sha")
+    return build_runtime(
+        settings,
+        audit,
+        transport=transport,
+        upstreams=upstreams,
+        rate_limiter=rate_limiter,
+    )

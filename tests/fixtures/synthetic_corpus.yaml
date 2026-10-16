@@ -78,6 +78,54 @@ cases:
 - entity: LOCATION
   kind: canonical
   value: 123 Fake Street, Testville, ZZ 00000
+- entity: MRN
+  kind: canonical
+  value: 'MRN: 0001234'
+- entity: MRN
+  kind: canonical
+  value: MRN 845221901
+- entity: MRN
+  kind: canonical
+  value: M.R.N. 1000456
+- entity: MRN
+  kind: canonical
+  value: 'Medical Record Number: 0000456789'
+- entity: MRN
+  kind: canonical
+  value: MR# 7654321
+- entity: ACCOUNT_ID
+  kind: canonical
+  value: 'Account Number: 99990000'
+- entity: ACCOUNT_ID
+  kind: canonical
+  value: 'Account ID: 001122334455'
+- entity: ACCOUNT_ID
+  kind: canonical
+  value: 'Acct #: 44002211'
+- entity: ACCOUNT_ID
+  kind: canonical
+  value: Acct. 1234567890123
+- entity: RECORD_ID
+  kind: canonical
+  value: 'Record ID: 000042'
+- entity: RECORD_ID
+  kind: canonical
+  value: 'Record Number: 8844221'
+- entity: RECORD_ID
+  kind: canonical
+  value: 'Record #: 550019'
+- entity: RECORD_ID
+  kind: canonical
+  value: REC-000042
+- entity: RECORD_ID
+  kind: canonical
+  value: REC 100045
+- entity: NPI
+  kind: canonical
+  value: 'NPI: 0000000000'
+- entity: NPI
+  kind: canonical
+  value: NPI 1234567890
 negatives:
 - '#24058'
 - v1.2.3

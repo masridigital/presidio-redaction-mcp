@@ -17,7 +17,7 @@ from presidio_redaction_mcp.logging_setup import configure_logging
 def main() -> None:
     config_path = Path(os.environ.get("PRM_CONFIG", "/app/config/allowlist.yaml"))
     settings = load_settings(config_path)
-    configure_logging(settings.recognizers, os.environ.get("LOG_LEVEL", "INFO"))
+    configure_logging(settings.recognizers, os.environ.get("LOG_LEVEL", "INFO"), settings.secret_values)
     audit = AuditLog(
         Path(os.environ.get("PRM_AUDIT_PATH", "/var/lib/presidio-redaction-mcp/audit/audit.jsonl")),
         Path(os.environ.get("PRM_AUDIT_STATE", "/var/lib/presidio-redaction-mcp/audit/config-sha")),

@@ -57,10 +57,12 @@ class PresidioClient:
         analyzed = await self._post(self.analyzer_url, analyze_body)
         results = self._parse_analyzer(analyzed, text)
         # Mask every detection. There is no pass band between scores.
+        # Presidio 2.2.362 treats new_value as a literal. Omitting it selects
+        # the built-in placeholder "<" + entity type + ">".
         anonymize_body = {
             "text": text,
             "analyzer_results": results,
-            "anonymizers": {"DEFAULT": {"type": "replace", "new_value": "<{entity_type}>"}},
+            "anonymizers": {"DEFAULT": {"type": "replace"}},
         }
         anonymized = await self._post(self.anonymizer_url, anonymize_body)
         if not isinstance(anonymized, dict) or not isinstance(anonymized.get("text"), str):
