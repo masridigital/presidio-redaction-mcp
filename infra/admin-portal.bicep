@@ -3,8 +3,9 @@
 // Container Apps cannot mount Azure Files with a managed identity
 // (https://learn.microsoft.com/en-us/azure/container-apps/storage-mounts-azure-files),
 // so this template does not create a file share and does not read a storage account key.
-// One replica. Publish takes a lease and an ETag on active.json. Do not raise
-// maxReplicas until that lease is the only writer. This file is not applied by CI.
+// One replica. Publish takes a lease. Version files are write-once, the active
+// config is the highest verified version, and the audit log is an append blob.
+// Do not raise maxReplicas until that lease is the only writer. This file is not applied by CI.
 
 targetScope = 'resourceGroup'
 
@@ -56,11 +57,27 @@ param deployerPrincipalType string = 'ServicePrincipal'
 
 param publishToVnet bool = true
 
-// Deploy fails unless containerImage is repository@sha256:<digest>.
-var adminImagePin = indexOf(containerImage, '@sha256:') >= 0 && indexOf(containerImage, ':latest') < 0 ? 'pinned' : substring(containerImage, length(containerImage), 1)
+@description('standard is a software RSA-2048 key. premium with 3072 is an HSM-backed key.')
+@allowed([
+  'standard'
+  'premium'
+])
+param keyVaultSku string = 'standard'
 
-var secretsOfficerRole = 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
-var cryptoOfficerRole = '14b46e9e-c2b7-41b4-b545-8d5e335c5e6a'
+@description('2048 on the standard vault. 3072 requires premium and is stored in HSM.')
+@allowed([
+  2048
+  3072
+])
+param signingKeyBits int = 2048
+
+// Deploy fails unless containerImage is repository@sha256: and the digest is 64 characters.
+var adminImageParts = split(containerImage, '@sha256:')
+var adminImageDigest = last(adminImageParts)
+var adminImagePin = length(adminImageParts) == 2 && length(adminImageDigest) == 64 && indexOf(containerImage, ':latest') < 0 ? adminImageDigest : substring(containerImage, length(containerImage), 1)
+var signingKeyType = keyVaultSku == 'premium' && signingKeyBits == 3072 ? 'RSA-HSM' : (keyVaultSku == 'standard' && signingKeyBits == 2048 ? 'RSA' : substring(keyVaultSku, length(keyVaultSku), 1))
+
+var sessionCondition = trim(loadTextContent('session-secret-condition.txt'))
 var blobContributorRole = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 var blobReaderRole = '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
 
@@ -76,7 +93,7 @@ resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = {
     tenantId: entraTenantId
     sku: {
       family: 'A'
-      name: 'standard'
+      name: keyVaultSku
     }
     enableRbacAuthorization: true
     enablePurgeProtection: true
@@ -93,8 +110,8 @@ resource signingKey 'Microsoft.KeyVault/vaults/keys@2023-07-01' = {
   parent: kv
   name: 'prm-config-signing'
   properties: {
-    kty: 'RSA'
-    keySize: 2048
+    kty: signingKeyType
+    keySize: signingKeyBits
     keyOps: [
       'sign'
       'verify'
@@ -104,25 +121,38 @@ resource signingKey 'Microsoft.KeyVault/vaults/keys@2023-07-01' = {
     }
   }
   dependsOn: [
-    deployerCryptoRole
+    deployerKeyCreate
   ]
 }
 
-resource deployerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(kv.id, deployerPrincipalId, secretsOfficerRole)
-  scope: kv
+resource deployerKeyRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
+  name: guid(resourceGroup().id, 'prm-key-create')
   properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', secretsOfficerRole)
-    principalId: deployerPrincipalId
-    principalType: deployerPrincipalType
+    roleName: 'prm-key-create-${uniqueString(resourceGroup().id)}'
+    description: 'Create the signing key during setup. Sign is not included.'
+    type: 'CustomRole'
+    permissions: [
+      {
+        actions: []
+        notActions: []
+        dataActions: [
+          'Microsoft.KeyVault/vaults/keys/create/action'
+          'Microsoft.KeyVault/vaults/keys/read'
+        ]
+        notDataActions: []
+      }
+    ]
+    assignableScopes: [
+      resourceGroup().id
+    ]
   }
 }
 
-resource deployerCryptoRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(kv.id, deployerPrincipalId, cryptoOfficerRole)
+resource deployerKeyCreate 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(kv.id, deployerPrincipalId, 'key-create')
   scope: kv
   properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', cryptoOfficerRole)
+    roleDefinitionId: deployerKeyRole.id
     principalId: deployerPrincipalId
     principalType: deployerPrincipalType
   }
@@ -132,7 +162,7 @@ resource signRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
   name: guid(resourceGroup().id, 'prm-config-sign')
   properties: {
     roleName: 'prm-config-sign-${uniqueString(resourceGroup().id)}'
-    description: 'Sign the config key and create the session secret. Generated in Key Vault.'
+    description: 'Sign the config key. Secret access is a separate role scoped to the session secret.'
     type: 'CustomRole'
     permissions: [
       {
@@ -141,8 +171,6 @@ resource signRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
         dataActions: [
           'Microsoft.KeyVault/vaults/keys/read'
           'Microsoft.KeyVault/vaults/keys/sign/action'
-          'Microsoft.KeyVault/vaults/secrets/getSecret/action'
-          'Microsoft.KeyVault/vaults/secrets/setSecret/action'
         ]
         notDataActions: []
       }
@@ -177,12 +205,47 @@ resource verifyRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
 }
 
 resource identitySign 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(kv.id, identity.id, 'sign')
-  scope: kv
+  name: guid(signingKey.id, identity.id, 'sign')
+  scope: signingKey
   properties: {
     roleDefinitionId: signRole.id
     principalId: identity.properties.principalId
     principalType: 'ServicePrincipal'
+  }
+}
+
+resource sessionRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
+  name: guid(resourceGroup().id, 'prm-session-secret')
+  properties: {
+    roleName: 'prm-session-secret-${uniqueString(resourceGroup().id)}'
+    description: 'Get and set the session secret only.'
+    type: 'CustomRole'
+    permissions: [
+      {
+        actions: []
+        notActions: []
+        dataActions: [
+          'Microsoft.KeyVault/vaults/secrets/getSecret/action'
+          'Microsoft.KeyVault/vaults/secrets/setSecret/action'
+        ]
+        notDataActions: []
+      }
+    ]
+    assignableScopes: [
+      resourceGroup().id
+    ]
+  }
+}
+
+resource identitySession 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(kv.id, identity.id, 'session-secret')
+  scope: kv
+  properties: {
+    roleDefinitionId: sessionRole.id
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+    condition: sessionCondition
+    conditionVersion: '2.0'
   }
 }
 
@@ -236,12 +299,14 @@ resource container 'Microsoft.Storage/storageAccounts/blobServices/containers@20
   }
 }
 
+// Unlocked. Version blobs are write-once. allowProtectedAppendWrites lets the
+// audit append blob grow. Lock this policy after a soak; see docs/signing-key-rotation.md.
 resource configImmutability 'Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies@2023-01-01' = {
   parent: container
   name: 'default'
   properties: {
     immutabilityPeriodSinceCreationInDays: 365
-    allowProtectedAppendWrites: false
+    allowProtectedAppendWrites: true
   }
 }
 
@@ -484,6 +549,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
   dependsOn: [
     signingKey
     identitySign
+    identitySession
     container
     configImmutability
     blobRole

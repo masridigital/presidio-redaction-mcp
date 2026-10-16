@@ -21,6 +21,9 @@ _FLOOR_BLOB = "floor.jsonl"
 
 
 class NullFloor:
+    def present(self) -> bool:
+        return False
+
     def high_water(self) -> int:
         return 0
 
@@ -33,6 +36,9 @@ class LocalVersionFloor:
 
     def __init__(self, path: Path) -> None:
         self.path = path
+
+    def present(self) -> bool:
+        return self.path.is_file()
 
     def high_water(self) -> int:
         if not self.path.is_file():
@@ -71,29 +77,52 @@ class BlobVersionFloor:
         self._token = token_provider
         self._client = client or httpx.Client(timeout=10)
 
+    def present(self) -> bool:
+        _current, _offset, exists = self._snapshot()
+        return exists
+
     def high_water(self) -> int:
-        response = self._client.get(self._blob_url(), headers=self._headers())
-        if response.status_code == 404:
+        current, _offset, exists = self._snapshot()
+        if not exists:
             return 0
-        if response.status_code != 200:
-            raise ConfigRejected("version_floor_rejected")
-        return _highest(response.text)
+        return current
 
     def advance(self, version_id: int, sha256: str) -> None:
-        current = self.high_water()
-        if version_id < current:
-            raise ConfigRejected("snapshot_replay")
-        if version_id == current:
-            return
+        """Append at the current length. A replica that lost the race retries."""
         if len(sha256) != 64:
             raise ConfigRejected("version_floor_rejected")
-        self._ensure_append_blob()
         line = json.dumps({"sha256": sha256, "version_id": version_id}, separators=(",", ":")) + "\n"
-        headers = self._headers()
-        headers["Content-Type"] = "text/plain"
-        response = self._client.put(self._blob_url() + "?comp=appendblock", content=line.encode("utf-8"), headers=headers)
-        if response.status_code not in {201, 200}:
+        for _attempt in range(5):
+            current, offset, exists = self._snapshot()
+            if exists and version_id < current:
+                raise ConfigRejected("snapshot_replay")
+            if exists and version_id == current:
+                return
+            if not exists:
+                self._ensure_append_blob()
+                continue
+            headers = self._headers()
+            headers["Content-Type"] = "text/plain"
+            headers["x-ms-blob-condition-appendpos"] = str(offset)
+            response = self._client.put(
+                self._blob_url() + "?comp=appendblock",
+                content=line.encode("utf-8"),
+                headers=headers,
+            )
+            if response.status_code in {201, 200}:
+                return
+            if response.status_code == 412:
+                continue
             raise ConfigRejected("version_floor_rejected")
+        raise ConfigRejected("version_floor_rejected")
+
+    def _snapshot(self) -> tuple[int, int, bool]:
+        response = self._client.get(self._blob_url(), headers=self._headers())
+        if response.status_code == 404:
+            return 0, 0, False
+        if response.status_code != 200:
+            raise ConfigRejected("version_floor_rejected")
+        return _highest(response.text), len(response.content), True
 
     def _ensure_append_blob(self) -> None:
         probe = self._client.get(self._blob_url(), headers=self._headers())

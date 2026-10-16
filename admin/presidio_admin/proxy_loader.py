@@ -32,10 +32,12 @@ def load_for_proxy(
         provider: Any = token_provider if token_provider is not None else _blob_token_provider()
         store = ConfigStore.open(location, signer=verifier, token_provider=provider, floor=mark)
     else:
-        if not (Path(location) / "active.json").is_file():
+        if not any((Path(location) / "versions").glob("*.json")):
             raise ConfigRejected("published_config_missing")
         store = ConfigStore(Path(location), signer=verifier, floor=mark)
     record = store.verify_for_proxy()
+    if os.environ.get("PRM_ENV") == "production" and record.version_id > 1 and not mark.present():
+        raise ConfigRejected("version_floor_missing")
     mark.advance(record.version_id, record.sha256)
     return record
 

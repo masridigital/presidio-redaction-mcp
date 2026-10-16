@@ -1,7 +1,8 @@
-"""Signed, append-only config versions. The active pointer is HMAC-checked on read.
+"""Signed config versions. Version files are write-once.
 
-Version numbers only increase. A risky delta needs an approver who is not the
-actor. The proxy also requires the active hash to sit on the verified audit chain.
+The active config is the highest verified version. The audit log is appended,
+not rewritten. A risky delta needs an approver who is not the actor. The proxy
+also requires that hash to sit on the verified audit chain.
 """
 
 from __future__ import annotations
@@ -89,7 +90,7 @@ class ConfigStore:
 
     def bootstrap(self, config: PortalConfig, *, actor_oid: str = "bootstrap") -> VersionRecord:
         with self.documents.lease():
-            if self._pointer_raw() is not None:
+            if self._latest() is not None:
                 raise ConfigRejected("already_bootstrapped")
             return self._publish(
                 config,
@@ -130,9 +131,7 @@ class ConfigStore:
                 raise ConfigRejected("risk_flags_mismatch")
             if is_risky(current.risk_flags):
                 _require_other_approver(current.actor_oid, current.approver_oid)
-        active = self._signed_pointer()
-        if active.version_id != records[-1].version_id or active.sha256 != records[-1].sha256:
-            raise ConfigRejected("version_rollback")
+        active = records[-1]
         self._require_audit_anchor(active)
         return active
 
@@ -147,7 +146,7 @@ class ConfigStore:
         action: str,
     ) -> VersionRecord:
         with self.documents.lease():
-            previous = self._signed_pointer() if self._pointer_raw() is not None else None
+            previous = self._latest()
             return self._publish(
                 config,
                 actor_oid=actor_oid,
@@ -181,28 +180,30 @@ class ConfigStore:
         return rows
 
     def save_proposal(self, proposal: Proposal) -> None:
+        """Write a new blob. A later decision does not overwrite the pending one."""
         with self.documents.lease():
-            self._write_json(self._proposal_name(proposal.proposal_id), _proposal_dict(proposal), create=False)
+            self._write_json(self._next_proposal_name(proposal.proposal_id), _proposal_dict(proposal), create=True)
 
     def get_proposal(self, proposal_id: str) -> Proposal:
-        raw = self._read_signed(self._proposal_name(proposal_id))
-        if raw is None:
+        found = self._proposal_revisions(proposal_id)
+        if not found:
             raise ConfigRejected("proposal_missing")
-        proposal = _proposal_from(raw)
+        proposal = found[-1]
         if proposal.config_sha256 != _sha(proposal.config.model_dump(mode="json")):
             raise ConfigRejected("store_signature_invalid")
         return proposal
 
     def list_proposals(self) -> list[Proposal]:
-        found = []
+        latest: dict[str, Proposal] = {}
         for name in self.documents.names("proposals"):
             if not name.endswith(".json"):
                 continue
             raw = self._read_signed(name)
             if raw is None:
                 continue
-            found.append(_proposal_from(raw))
-        return found
+            proposal = _proposal_from(raw)
+            latest[proposal.proposal_id] = proposal
+        return list(latest.values())
 
     def mark_pending_stale(self) -> None:
         for proposal in self.list_proposals():
@@ -265,14 +266,7 @@ class ConfigStore:
         )
         if not self.audit.verify():
             raise ConfigRejected("audit_chain_broken")
-        pointer_match = None if previous is None else self._pointer_raw()
-        self._write_json(
-            "active.json",
-            {"version_id": version_id, "sha256": digest},
-            create=previous is None,
-            if_match=None if pointer_match is None else pointer_match.etag,
-        )
-        return self._signed_pointer()
+        return self.version(version_id)
 
     def _signed_versions(self) -> list[VersionRecord]:
         records = []
@@ -286,22 +280,11 @@ class ConfigStore:
         records.sort(key=lambda item: item.version_id)
         return records
 
-    def _signed_pointer(self) -> VersionRecord:
-        raw = self._read_signed("active.json")
-        if raw is None:
-            raise ConfigRejected("published_config_missing")
-        try:
-            version_id = int(raw["version_id"])
-            expected = str(raw["sha256"])
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ConfigRejected("published_config_rejected") from exc
-        version = self._read_signed(self._version_name(version_id))
-        if version is None:
-            raise ConfigRejected("published_config_rejected")
-        record = _version_from(version)
-        if record.sha256 != expected or record.version_id != version_id:
-            raise ConfigRejected("store_signature_invalid")
-        return record
+    def _latest(self) -> VersionRecord | None:
+        records = self._signed_versions()
+        if not records:
+            return None
+        return records[-1]
 
     def _require_audit_anchor(self, active: VersionRecord) -> None:
         highest = 0
@@ -330,9 +313,6 @@ class ConfigStore:
             raise ConfigRejected("version_rollback")
         if active.version_id < self.floor.high_water():
             raise ConfigRejected("snapshot_replay")
-
-    def _pointer_raw(self):
-        return self.documents.read("active.json")
 
     def _read_signed(self, name: str) -> dict[str, Any] | None:
         body = self.documents.read(name)
@@ -365,13 +345,7 @@ class ConfigStore:
         return body.data.decode("utf-8")
 
     def _write_audit(self, text: str) -> None:
-        current = self.documents.read("audit.jsonl")
-        self.documents.write(
-            "audit.jsonl",
-            text.encode("utf-8"),
-            if_match=None if current is None else current.etag,
-            create=current is None,
-        )
+        self.documents.append("audit.jsonl", text.encode("utf-8"))
 
     @staticmethod
     def _version_name(version_id: int) -> str:
@@ -379,11 +353,28 @@ class ConfigStore:
             raise ConfigRejected("version_rollback")
         return f"versions/{version_id:06d}.json"
 
+    def _next_proposal_name(self, proposal_id: str) -> str:
+        prefix = self._proposal_prefix(proposal_id)
+        seq = len(self._proposal_names(prefix)) + 1
+        return f"{prefix}/{seq:06d}.json"
+
+    def _proposal_revisions(self, proposal_id: str) -> list[Proposal]:
+        found = []
+        for name in self._proposal_names(self._proposal_prefix(proposal_id)):
+            raw = self._read_signed(name)
+            if raw is None:
+                continue
+            found.append(_proposal_from(raw))
+        return found
+
+    def _proposal_names(self, prefix: str) -> list[str]:
+        return sorted(name for name in self.documents.names(prefix) if name.endswith(".json"))
+
     @staticmethod
-    def _proposal_name(proposal_id: str) -> str:
+    def _proposal_prefix(proposal_id: str) -> str:
         if not proposal_id.replace("-", "").isalnum():
             raise ConfigRejected("proposal_missing")
-        return f"proposals/{proposal_id}.json"
+        return f"proposals/{proposal_id}"
 
 
 def _require_other_approver(actor_oid: str, approver_oid: str | None) -> None:

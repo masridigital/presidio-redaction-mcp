@@ -1,4 +1,4 @@
-"""Asymmetric signatures for versions, proposals, the active pointer, and the admin audit.
+"""Asymmetric signatures for versions, proposals, and the admin audit.
 
 The proxy verifies with a public key. It has no sign operation. A symmetric
 HMAC for those documents would let the proxy forge a snapshot.

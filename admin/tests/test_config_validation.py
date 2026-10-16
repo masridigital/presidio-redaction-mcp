@@ -96,9 +96,8 @@ def test_proxy_reader_fails_closed_on_a_tampered_or_missing_store(tmp_path, sign
     loaded = load_for_proxy(store.root, verifier=verifier)
     assert loaded.config.enabled_tools() == []
 
-    pointer = json.loads((store.root / "active.json").read_text(encoding="utf-8"))
-    pointer["sha256"] = "0" * 64
-    (store.root / "active.json").write_text(json.dumps(pointer), encoding="utf-8")
+    version = store.root / "versions" / "000001.json"
+    version.write_bytes(version.read_bytes().replace(b"sha256", b"sha000", 1))
     with pytest.raises(ConfigRejected) as caught:
         load_for_proxy(store.root, verifier=verifier)
     assert caught.value.reason_code == "store_signature_invalid"
@@ -112,7 +111,6 @@ def test_a_signed_older_pointer_is_a_rollback(tmp_path, signer: RsaConfigSigner)
     verifier = signer.public_verifier()
     store = ConfigStore(tmp_path / "store", signer=signer)
     store.bootstrap(default_config())
-    first = (store.root / "active.json").read_bytes()
     data = default_config().model_dump(mode="json")
     data["upstreams"]["stackjack"]["enabled"] = False
     store.publish(
@@ -124,10 +122,54 @@ def test_a_signed_older_pointer_is_a_rollback(tmp_path, signer: RsaConfigSigner)
         action="publish",
     )
     assert store.read_active().version_id == 2
-    (store.root / "active.json").write_bytes(first)
+    (store.root / "versions" / "000002.json").unlink()
     with pytest.raises(ConfigRejected) as caught:
         load_for_proxy(store.root, verifier=verifier)
     assert caught.value.reason_code == "version_rollback"
+
+
+def test_several_publishes_do_not_overwrite_version_files(tmp_path, signer: RsaConfigSigner) -> None:
+    from presidio_admin.documents import LocalDocuments
+
+    class WriteOnce(LocalDocuments):
+        def write(self, name: str, data: bytes, *, if_match: str | None = None, create: bool = False) -> str:
+            if self.read(name) is not None:
+                raise ConfigRejected("store_conflict")
+            return super().write(name, data, if_match=if_match, create=True)
+
+    root = tmp_path / "store"
+    store = ConfigStore(root, signer=signer, documents=WriteOnce(root))
+    store.bootstrap(default_config())
+    actor = "11111111-1111-4111-8111-111111111111"
+    for upstream in ("stackjack", "composio"):
+        data = store.read_active().config.model_dump(mode="json")
+        data["upstreams"][upstream]["enabled"] = False
+        store.publish(
+            parse_config(data),
+            actor_oid=actor,
+            approver_oid=None,
+            summary=[f"disable {upstream}"],
+            proposal_id="",
+            action="publish",
+        )
+    data = store.read_active().config.model_dump(mode="json")
+    data["upstreams"]["stackjack"]["tools"][0]["max_items"] = 5
+    store.publish(
+        parse_config(data),
+        actor_oid=actor,
+        approver_oid=None,
+        summary=["lower max items"],
+        proposal_id="",
+        action="publish",
+    )
+    assert store.read_active().version_id == 4
+    assert (root / "versions" / "000001.json").is_file()
+    assert (root / "versions" / "000004.json").is_file()
+    assert not (root / "active.json").exists()
+    assert len((root / "audit.jsonl").read_text(encoding="utf-8").splitlines()) == 4
+    with pytest.raises(ConfigRejected) as caught:
+        store.documents.write("versions/000001.json", b"{}", create=True)
+    assert caught.value.reason_code == "store_conflict"
 
 
 def test_version_floor_rejects_a_signed_snapshot(tmp_path, signer: RsaConfigSigner) -> None:

@@ -175,9 +175,7 @@ class AuditChain:
             clean["ts"] = datetime.now(UTC).isoformat()
             clean["prev_hash"] = self._prev
             line = seal_line(self.signer, clean)
-            current = self._read_text()
-            prefix = current if current.endswith("\n") or not current else current + "\n"
-            self._write_text(prefix + line + "\n")
+            self._write_text(line + "\n")
             self._prev = str(json.loads(line)["row_hash"])
 
     def verify(self) -> bool:

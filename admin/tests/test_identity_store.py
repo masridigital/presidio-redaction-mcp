@@ -163,6 +163,7 @@ def test_blob_floor_appends_and_rejects_a_lower_version() -> None:
                 return httpx.Response(404)
             return httpx.Response(200, text=state["text"])
         if "comp=appendblock" in str(request.url):
+            assert request.headers["x-ms-blob-condition-appendpos"] == str(len(state["text"] or ""))
             state["text"] = (state["text"] or "") + request.content.decode("utf-8")
             return httpx.Response(201)
         assert request.headers["x-ms-blob-type"] == "AppendBlob"
@@ -186,3 +187,80 @@ def test_blob_floor_appends_and_rejects_a_lower_version() -> None:
     with pytest.raises(ConfigRejected) as same:
         floor_separated("https://prm.blob.core.windows.net/prm-floor", floor)
     assert same.value.reason_code == "version_floor_inside_store"
+
+
+def test_floor_append_retries_when_the_offset_moves() -> None:
+    state = {"text": "", "moved": False}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, text=state["text"])
+        if "comp=appendblock" in str(request.url):
+            assert request.headers["x-ms-blob-condition-appendpos"] == str(len(state["text"]))
+            if not state["moved"]:
+                state["moved"] = True
+                state["text"] += json.dumps({"sha256": "cd" * 32, "version_id": 1}) + "\n"
+                return httpx.Response(412)
+            state["text"] += request.content.decode("utf-8")
+            return httpx.Response(201)
+        return httpx.Response(200)
+
+    floor = BlobVersionFloor(
+        "https://prm.blob.core.windows.net/prm-floor",
+        token_provider=lambda: "aaa.bbb.ccc",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    floor.advance(2, "ab" * 32)
+    assert floor.high_water() == 2
+
+
+def test_production_refuses_a_missing_floor_after_the_first_version(tmp_path, signer, monkeypatch: pytest.MonkeyPatch) -> None:
+    from presidio_admin.proxy_loader import load_for_proxy
+    from presidio_admin.schema import default_config, parse_config
+    from presidio_admin.store import ConfigStore
+
+    monkeypatch.setenv("PRM_ENV", "production")
+    store = ConfigStore(tmp_path / "store", signer=signer)
+    store.bootstrap(default_config())
+    verifier = signer.public_verifier()
+
+    created = {"blob": False}
+
+    def missing(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            if not created["blob"]:
+                return httpx.Response(404)
+            return httpx.Response(200, text="")
+        if request.headers.get("x-ms-blob-type") == "AppendBlob":
+            created["blob"] = True
+            return httpx.Response(201)
+        if "comp=appendblock" in str(request.url):
+            assert request.headers["x-ms-blob-condition-appendpos"] == "0"
+            return httpx.Response(201)
+        return httpx.Response(404)
+
+    first = BlobVersionFloor(
+        "https://prm.blob.core.windows.net/prm-floor",
+        token_provider=lambda: "aaa.bbb.ccc",
+        client=httpx.Client(transport=httpx.MockTransport(missing)),
+    )
+    loaded = load_for_proxy(store.root, verifier=verifier, floor=first)
+    assert loaded.version_id == 1
+    data = default_config().model_dump(mode="json")
+    data["upstreams"]["stackjack"]["enabled"] = False
+    store.publish(
+        parse_config(data),
+        actor_oid="11111111-1111-4111-8111-111111111111",
+        approver_oid=None,
+        summary=["disable stackjack"],
+        proposal_id="",
+        action="publish",
+    )
+    gone = BlobVersionFloor(
+        "https://prm.blob.core.windows.net/prm-floor",
+        token_provider=lambda: "aaa.bbb.ccc",
+        client=httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(404))),
+    )
+    with pytest.raises(ConfigRejected) as caught:
+        load_for_proxy(store.root, verifier=verifier, floor=gone)
+    assert caught.value.reason_code == "version_floor_missing"

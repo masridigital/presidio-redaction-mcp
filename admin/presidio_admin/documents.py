@@ -58,6 +58,18 @@ class LocalDocuments:
         path.chmod(0o600)
         return hashlib.sha256(data).hexdigest()
 
+    def append(self, name: str, data: bytes) -> None:
+        """Add bytes. This does not replace a blob the immutability policy would reject."""
+        if not data:
+            raise ConfigRejected("config_store_rejected")
+        path = self._path(name)
+        path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        with path.open("ab") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        path.chmod(0o600)
+
     def names(self, prefix: str) -> list[str]:
         base = self.root / prefix
         if not base.exists():
@@ -135,6 +147,35 @@ class AzureBlobDocuments:
         if not etag:
             raise ConfigRejected("config_store_rejected")
         return etag
+
+    def append(self, name: str, data: bytes) -> None:
+        """Append block with the current length as a condition. A 412 is a conflict."""
+        if not data:
+            raise ConfigRejected("config_store_rejected")
+        self._ensure_append_blob(name)
+        current = self.read(name)
+        offset = 0 if current is None else len(current.data)
+        headers = self._headers()
+        headers["Content-Type"] = "text/plain"
+        headers["x-ms-blob-condition-appendpos"] = str(offset)
+        response = self._client.put(self._url(name) + "?comp=appendblock", content=data, headers=headers)
+        if response.status_code == 412:
+            raise ConfigRejected("store_conflict")
+        if response.status_code not in {201, 200}:
+            raise ConfigRejected("config_store_rejected")
+
+    def _ensure_append_blob(self, name: str) -> None:
+        probe = self._client.get(self._url(name), headers=self._headers())
+        if probe.status_code == 200:
+            return
+        if probe.status_code != 404:
+            raise ConfigRejected("config_store_rejected")
+        headers = self._headers()
+        headers["x-ms-blob-type"] = "AppendBlob"
+        headers["Content-Length"] = "0"
+        created = self._client.put(self._url(name), headers=headers)
+        if created.status_code not in {201, 200, 409}:
+            raise ConfigRejected("config_store_rejected")
 
     def names(self, prefix: str) -> list[str]:
         response = self._client.get(

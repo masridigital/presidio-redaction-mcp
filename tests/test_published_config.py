@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -83,9 +82,8 @@ def test_published_reader_fails_closed_and_applies_thresholds(tmp_path: Path, mo
     assert workload.human is False
     assert "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" not in settings.baa_client_ids
 
-    pointer = json.loads((store.root / "active.json").read_text(encoding="utf-8"))
-    pointer["sha256"] = "ab" * 32
-    (store.root / "active.json").write_text(json.dumps(pointer), encoding="utf-8")
+    version = store.root / "versions" / "000002.json"
+    version.write_bytes(version.read_bytes().replace(b"sha256", b"sha000", 1))
     with pytest.raises(ConfigError) as caught:
         load_published_or_fail(store.root, verifier=verifier)
     assert caught.value.reason_code == "store_signature_invalid"
@@ -161,6 +159,11 @@ def test_prod_templates_set_the_config_store_without_shared_keys() -> None:
     assert "prm-floor" in portal
     assert "keys/verify/action" in portal
     assert "keys/sign/action" in portal
+    assert "length(adminImageDigest) == 64" in portal
+    assert "session-secret-condition.txt" in portal
+    assert "session-hmac-key" in (ROOT / "infra" / "session-secret-condition.txt").read_text(encoding="utf-8")
+    assert "allowProtectedAppendWrites: true" in portal
+    assert "14b46e9e-c2b7-41b4-b545-8d5e335c5e6a" not in portal
     assert "PRM_STORE_HMAC_KEY" not in proxy
     assert "PRM_STORE_HMAC_KEY" not in portal
     assert "PRM_SIGNING_KEY_URL" in proxy
