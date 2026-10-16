@@ -300,7 +300,8 @@ resource container 'Microsoft.Storage/storageAccounts/blobServices/containers@20
 }
 
 // Unlocked. Version blobs are write-once. allowProtectedAppendWrites lets the
-// audit append blob grow. Lock this policy after a soak; see docs/signing-key-rotation.md.
+// audit append blob grow. Lock this policy after a soak and before any PHI
+// client. See the pre-PHI checklist in docs/signing-key-rotation.md.
 resource configImmutability 'Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies@2023-01-01' = {
   parent: container
   name: 'default'

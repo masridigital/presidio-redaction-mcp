@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -24,7 +25,9 @@ def _settings(monkeypatch: pytest.MonkeyPatch):
     return load_settings(ROOT / "config" / "allowlist.yaml", env="test")
 
 
-def test_published_reader_fails_closed_and_applies_thresholds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_published_reader_fails_closed_and_applies_thresholds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     signer = RsaConfigSigner.generate(key_id="test-key")
     verifier = signer.public_verifier()
     with pytest.raises(ConfigError):
@@ -84,9 +87,11 @@ def test_published_reader_fails_closed_and_applies_thresholds(tmp_path: Path, mo
 
     version = store.root / "versions" / "000002.json"
     version.write_bytes(version.read_bytes().replace(b"sha256", b"sha000", 1))
-    with pytest.raises(ConfigError) as caught:
-        load_published_or_fail(store.root, verifier=verifier)
+    with caplog.at_level(logging.ERROR, logger="presidio_admin.alert"):
+        with pytest.raises(ConfigError) as caught:
+            load_published_or_fail(store.root, verifier=verifier)
     assert caught.value.reason_code == "store_signature_invalid"
+    assert "alert reason_code=store_signature_invalid" in caplog.text
 
 
 def test_production_and_entra_require_the_published_store(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -168,6 +173,8 @@ def test_prod_templates_set_the_config_store_without_shared_keys() -> None:
     assert "PRM_STORE_HMAC_KEY" not in portal
     assert "PRM_SIGNING_KEY_URL" in proxy
     assert "PRM_VERSION_FLOOR" in proxy
+    assert "Microsoft.Insights/scheduledQueryRules" in proxy
+    assert 'Log contains "store_signature_invalid"' in proxy
     assert "PRM_KEY_VAULT_URL" in portal
     assert "listKeys(" not in portal
     assert "accountKey:" not in portal
@@ -180,6 +187,11 @@ def test_prod_templates_set_the_config_store_without_shared_keys() -> None:
     assert "@sha256:" in example
     assert "proxyPrincipalId" in example
     assert "maxReplicas: 1" in portal
+    rotation = (ROOT / "docs" / "signing-key-rotation.md").read_text(encoding="utf-8")
+    assert "## Pre-PHI checklist" in rotation
+    assert "Lock the immutability policies on `prm-config` and `prm-floor` after the soak." in rotation
+    assert "## Junk or unsigned version file" in rotation
+    assert "prm-config-restore" in rotation
 
 
 async def test_unpublished_tool_is_denied(stack) -> None:

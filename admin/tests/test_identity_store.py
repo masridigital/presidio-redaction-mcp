@@ -219,7 +219,7 @@ def test_production_refuses_a_missing_floor_after_the_first_version(tmp_path, si
     from presidio_admin.schema import default_config, parse_config
     from presidio_admin.store import ConfigStore
 
-    monkeypatch.setenv("PRM_ENV", "production")
+    monkeypatch.delenv("PRM_ENV", raising=False)
     store = ConfigStore(tmp_path / "store", signer=signer)
     store.bootstrap(default_config())
     verifier = signer.public_verifier()
@@ -244,7 +244,7 @@ def test_production_refuses_a_missing_floor_after_the_first_version(tmp_path, si
         token_provider=lambda: "aaa.bbb.ccc",
         client=httpx.Client(transport=httpx.MockTransport(missing)),
     )
-    loaded = load_for_proxy(store.root, verifier=verifier, floor=first)
+    loaded = load_for_proxy(store.root, verifier=verifier, floor=first, env="production")
     assert loaded.version_id == 1
     data = default_config().model_dump(mode="json")
     data["upstreams"]["stackjack"]["enabled"] = False
@@ -261,6 +261,35 @@ def test_production_refuses_a_missing_floor_after_the_first_version(tmp_path, si
         token_provider=lambda: "aaa.bbb.ccc",
         client=httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(404))),
     )
+    monkeypatch.setenv("PRM_ENV", "lab")
     with pytest.raises(ConfigRejected) as caught:
-        load_for_proxy(store.root, verifier=verifier, floor=gone)
+        load_for_proxy(store.root, verifier=verifier, floor=gone, env="production")
     assert caught.value.reason_code == "version_floor_missing"
+
+
+def test_floor_check_uses_settings_env_not_prm_env(tmp_path, signer, monkeypatch: pytest.MonkeyPatch) -> None:
+    from presidio_admin.proxy_loader import load_for_proxy
+    from presidio_admin.schema import default_config, parse_config
+    from presidio_admin.store import ConfigStore
+
+    monkeypatch.setenv("PRM_ENV", "production")
+    store = ConfigStore(tmp_path / "store", signer=signer)
+    store.bootstrap(default_config())
+    data = default_config().model_dump(mode="json")
+    data["upstreams"]["stackjack"]["enabled"] = False
+    store.publish(
+        parse_config(data),
+        actor_oid="11111111-1111-4111-8111-111111111111",
+        approver_oid=None,
+        summary=["disable stackjack"],
+        proposal_id="",
+        action="publish",
+    )
+
+    from presidio_admin.floor import LocalVersionFloor
+
+    mark = LocalVersionFloor(tmp_path / "outside-floor" / "floor.jsonl")
+    loaded = load_for_proxy(store.root, verifier=signer.public_verifier(), floor=mark, env="test")
+    assert loaded.version_id == 2
+    assert mark.present() is True
+    assert mark.high_water() == 2

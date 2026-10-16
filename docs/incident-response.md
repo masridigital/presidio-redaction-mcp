@@ -13,6 +13,7 @@ Open a review when any of the following is true:
 - Presidio failed open in any other component (this proxy is built to fail closed; a fail-open report is itself the incident).
 - The allowlist changed without a `config_change` audit row, or a tool outside the day-1 list was observed.
 - A day-1 tool returned data that is PHI in the source, which is outside `docs/upstream-scope-policy.md` even if the proxy masked the result.
+- Reason code `store_signature_invalid`. The proxy workspace alerts on that line. Recovery for a junk or unsigned version file under a locked policy is a new container and a re-publish, in `docs/signing-key-rotation.md`.
 
 Successful masking (entity counts on an allow row, placeholders in the result) is the control working. It is not, by itself, a breach. A miss is.
 

@@ -39,7 +39,12 @@ def main() -> None:
         try:
             verifier = signer_from_env(allow_sign=False)
             floor = _floor(os.environ.get("PRM_VERSION_FLOOR", ""), store_dir)
-            published = load_published_or_fail(store_dir, verifier=verifier, floor=floor)
+            published = load_published_or_fail(
+                store_dir,
+                verifier=verifier,
+                floor=floor,
+                env=settings.env,
+            )
             settings = apply_published(settings, published)
         except (ConfigError, ConfigRejected):
             raise SystemExit(1) from None

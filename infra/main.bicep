@@ -210,6 +210,42 @@ resource law 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   }
 }
 
+// Fires when the proxy logs alert reason_code=store_signature_invalid.
+resource storeSignatureAlert 'Microsoft.Insights/scheduledQueryRules@2023-12-01' = {
+  name: '${namePrefix}-store-signature-invalid'
+  location: location
+  properties: {
+    displayName: 'Config store signature invalid'
+    description: 'The proxy refused a published config because the signature did not verify.'
+    severity: 1
+    enabled: true
+    evaluationFrequency: 'PT5M'
+    scopes: [
+      law.id
+    ]
+    windowSize: 'PT15M'
+    skipQueryValidation: true
+    autoMitigate: false
+    criteria: {
+      allOf: [
+        {
+          query: 'ContainerAppConsoleLogs | where Log contains "store_signature_invalid"'
+          timeAggregation: 'Count'
+          operator: 'GreaterThan'
+          threshold: 0
+          failingPeriods: {
+            numberOfEvaluationPeriods: 1
+            minFailingPeriodsToAlert: 1
+          }
+        }
+      ]
+    }
+    actions: {
+      actionGroups: []
+    }
+  }
+}
+
 resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = {
   name: '${namePrefix}kv${uniqueString(resourceGroup().id)}'
   location: location

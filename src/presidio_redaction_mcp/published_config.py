@@ -28,12 +28,19 @@ def log_published(version_id: int | None, sha256: str) -> None:
     )
 
 
-def load_published_or_fail(store_dir: Path | str, *, verifier: Any, floor: Any = None) -> Any:
+def load_published_or_fail(
+    store_dir: Path | str,
+    *,
+    verifier: Any,
+    floor: Any = None,
+    env: str | None = None,
+) -> Any:
+    """``env`` is ``Settings.env``. Pass it from the process that loaded settings."""
     try:
         from presidio_admin.errors import ConfigRejected
         from presidio_admin.proxy_loader import load_for_proxy
 
-        return load_for_proxy(store_dir, verifier=verifier, floor=floor)
+        return load_for_proxy(store_dir, verifier=verifier, floor=floor, env=env)
     except ConfigError:
         raise
     except ConfigRejected as exc:

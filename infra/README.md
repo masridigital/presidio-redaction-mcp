@@ -10,7 +10,7 @@ Azure Container Apps for the redaction proxy, internal ingress, system-assigned 
 - `signingKeyUrl` — `https://<vault>.vault.azure.net/keys/prm-config-signing`
 - `versionFloorUrl` — `https://<account>.blob.core.windows.net/prm-floor`
 
-The proxy verifies the signing key. It does not receive a private key or an HMAC for the store. Its tool-call audit HMAC stays a separate key on the host. The proxy identity reads `prm-config` with a bearer token and is the only writer of the version floor. Do not enable shared-key access on the account.
+The proxy verifies the signing key. It does not receive a private key or an HMAC for the store. Its tool-call audit HMAC stays a separate key on the host. The proxy identity reads `prm-config` with a bearer token and is the only writer of the version floor. Do not enable shared-key access on the account. The Log Analytics workspace alerts when console logs contain `store_signature_invalid`.
 
 Deploy the portal template first so those three outputs exist, and pass the proxy identity's principal id in as `proxyPrincipalId`. That assignment is verify-only on the key.
 

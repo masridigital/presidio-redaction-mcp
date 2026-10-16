@@ -43,6 +43,28 @@ az storage container immutability-policy lock --account-name <account> --contain
 
 A locked policy cannot be removed. The retention period can only increase.
 
+## Junk or unsigned version file
+
+A locked policy keeps every blob for the retention window. A junk or unsigned version file stays in `prm-config`. The proxy logs `alert reason_code=store_signature_invalid` and stays stopped. The scheduled query `prm-store-signature-invalid` on the proxy Log Analytics workspace fires on that line (`ContainerAppConsoleLogs | where Log contains "store_signature_invalid"`).
+
+Recovery is a new container and a re-publish:
+
+1. Create a new config container on the same private account, for example `prm-config-restore`. Leave the locked `prm-config` container in place for the retention window. Leave its blobs there.
+2. Create a new floor container, for example `prm-floor-restore`, with the same unlocked 365-day policy and protected append writes. A re-published store starts at version 1. The existing floor still records a higher version, so the proxy would refuse the new store as `snapshot_replay` until the floor is new as well.
+3. Grant the portal identity Storage Blob Data Contributor on the new config container only. Grant the proxy identity Storage Blob Data Reader on that container and Storage Blob Data Contributor on the new floor container.
+4. Point the portal `PRM_CONFIG_STORE` at the new config container and restart the portal.
+5. Re-publish the last known-good config through the portal. The portal signs a new version file with the current key. That file is version 1 in the new container.
+6. Point the proxy `PRM_CONFIG_STORE` and `PRM_VERSION_FLOOR` at the new containers and restart the proxy. The proxy verifies the new version and appends the new floor.
+7. After the soak on the new containers, lock those policies before a PHI client is enabled. The pre-PHI checklist is below.
+
+While a policy is still unlocked, delete the bad blob and publish the next version in the same container. The steps above are for a policy that is already locked.
+
+## Pre-PHI checklist
+
+Before a PHI client is enabled:
+
+- Lock the immutability policies on `prm-config` and `prm-floor` after the soak. Use the two `az storage container immutability-policy lock` commands above.
+
 ## Version floor
 
 `prm-floor` is a separate container. The portal identity is Storage Blob Data Contributor on `prm-config` only. The proxy identity is the writer of `prm-floor` (`floor.jsonl`, an append blob) and a reader of `prm-config`. The floor policy allows protected append writes so new lines can be added. A line that lowers the mark fails closed.

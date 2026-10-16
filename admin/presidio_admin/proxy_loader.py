@@ -23,7 +23,9 @@ def load_for_proxy(
     verifier: ConfigSigner,
     floor: Any = None,
     token_provider: Callable[[], str] | None = None,
+    env: str | None = None,
 ) -> VersionRecord:
+    """``env`` is ``settings.env`` from the proxy."""
     if verifier.allow_sign:
         raise ConfigRejected("sign_not_permitted")
     mark = floor or NullFloor()
@@ -36,7 +38,7 @@ def load_for_proxy(
             raise ConfigRejected("published_config_missing")
         store = ConfigStore(Path(location), signer=verifier, floor=mark)
     record = store.verify_for_proxy()
-    if os.environ.get("PRM_ENV") == "production" and record.version_id > 1 and not mark.present():
+    if env == "production" and record.version_id > 1 and not mark.present():
         raise ConfigRejected("version_floor_missing")
     mark.advance(record.version_id, record.sha256)
     return record
