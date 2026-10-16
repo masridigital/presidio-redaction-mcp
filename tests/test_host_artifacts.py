@@ -74,6 +74,12 @@ def test_install_sh_is_idempotent(tmp_path: Path):
     template = (tmp_path / "etc" / "wireguard" / "wg0.conf.template").read_text(encoding="utf-8")
     assert "10.8.0.1/24" in template
     assert "REPLACE_AT_INSTALL" in template
+    shipped = tmp_path / "opt" / "presidio-anonymizer" / "app.py"
+    assert shipped.is_file()
+    app_text = shipped.read_text(encoding="utf-8")
+    assert "5002" in app_text
+    assert "0.0.0.0" in app_text
+    assert "gunicorn" not in app_text
 
 
 def test_compose_builds_the_custom_analyzer_and_publishes_no_presidio_ports():
@@ -93,7 +99,8 @@ def test_compose_builds_the_custom_analyzer_and_publishes_no_presidio_ports():
     assert compose["networks"]["presidio_internal"]["internal"] is True
     published = text.split("ports:", 1)[1]
     assert "0.0.0.0:" not in published
-    assert "127.0.0.1:8443:8443" in text
+    assert "8443" not in text
+    assert "8444:8444" in text
     assert "secrets:" in text
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     assert "@sha256:" in dockerfile.splitlines()[0]
@@ -124,6 +131,16 @@ def test_systemd_units_are_hardened_and_native():
     assert "PRESIDIO_BIND=127.0.0.1" in analyzer
     assert "python -m presidio.serve" in analyzer
     assert "CapabilityBoundingSet=" in analyzer
+    anonymizer = (ROOT / "deploy" / "systemd" / "presidio-anonymizer.service").read_text(encoding="utf-8")
+    assert "raise SystemExit(0)" not in anonymizer
+    assert "gunicorn" not in anonymizer
+    assert "127.0.0.1:3001" not in anonymizer
+    assert "PRESIDIO_PORT=5002" in anonymizer
+    assert "ExecStart=/opt/presidio-anonymizer/venv/bin/python /opt/presidio-anonymizer/app.py" in anonymizer
+    assert "ConditionPathExists=/opt/presidio-anonymizer/app.py" in anonymizer
+    installer = (ROOT / "host" / "install.sh").read_text(encoding="utf-8")
+    assert "systemctl enable presidio-analyzer.service presidio-redaction-mcp.service" in installer
+    assert "enable presidio-analyzer.service presidio-anonymizer.service" not in installer
     serve = (ROOT / "deploy" / "presidio" / "serve.py").read_text(encoding="utf-8")
     assert "register_us_recognizers(engine)" in serve
     assert "def do_POST" in serve

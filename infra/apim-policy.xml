@@ -19,6 +19,10 @@
         <claim name="ver" match="all">
           <value>2.0</value>
         </claim>
+        <claim name="roles" match="any">
+          <value>Phi.Caller</value>
+          <value>NonPhi.Caller</value>
+        </claim>
       </required-claims>
     </validate-azure-ad-token>
     <validate-jwt header-name="Authorization" failed-validation-httpcode="401" require-expiration-time="true" require-scheme="Bearer" require-signed-tokens="true">
@@ -29,7 +33,26 @@
       <issuers>
         <issuer>https://login.microsoftonline.com/{{entra-tenant-id}}/v2.0</issuer>
       </issuers>
+      <required-claims>
+        <claim name="roles" match="any">
+          <value>Phi.Caller</value>
+          <value>NonPhi.Caller</value>
+        </claim>
+      </required-claims>
     </validate-jwt>
+    <!-- Phi.Caller is a delegated human token and must carry scp. NonPhi.Caller machine tokens have no scp. -->
+    <choose>
+      <when condition="@(context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;,&quot;&quot;).AsJwt()?.Claims.GetValueOrDefault(&quot;roles&quot;, new string[]{}).Contains(&quot;Phi.Caller&quot;) == true)">
+        <choose>
+          <when condition="@(!((context.Request.Headers.GetValueOrDefault(&quot;Authorization&quot;,&quot;&quot;).AsJwt()?.Claims.GetValueOrDefault(&quot;scp&quot;, new string[0]) ?? new string[0]).SelectMany(scope =&gt; scope.Split(' ')).Contains(&quot;access_as_user&quot;)))">
+            <return-response>
+              <set-status code="401" reason="scope_missing" />
+              <set-body>{"error":"unauthorized","reason_code":"scope_missing"}</set-body>
+            </return-response>
+          </when>
+        </choose>
+      </when>
+    </choose>
     <set-header name="X-MS-CLIENT-PRINCIPAL" exists-action="delete" />
     <set-header name="X-APIM-CLIENT-ID" exists-action="delete" />
     <set-header name="Cf-Access-Jwt-Assertion" exists-action="delete" />

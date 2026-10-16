@@ -27,7 +27,6 @@ class Runtime:
     upstreams: dict[str, MockUpstream]
     service: RedactionService
     verifier: ClaudeVerifier | None
-    cloudflare_app: Starlette
     vpn_app: Starlette
     private_app: Starlette | None = None
 
@@ -92,7 +91,6 @@ def build_runtime(
         verifier=verifier,
     )
     listeners = settings.allowlist.listeners
-    _reject_testserver(listeners.cloudflare_allowed_hosts)
     _reject_testserver(listeners.vpn_allowed_hosts)
     if entra is None and settings.auth_mode == "entra":
         entra = EntraTokenVerifier(
@@ -124,15 +122,6 @@ def build_runtime(
         upstreams=upstreams,
         service=service,
         verifier=verifier,
-        cloudflare_app=create_app(
-            ingress="cloudflare",
-            allowed_hosts=_hosts(
-                list(listeners.cloudflare_allowed_hosts),
-                test_mode=settings.env == "test",
-                override=allowed_hosts,
-            ),
-            **shared,
-        ),
         vpn_app=create_app(
             ingress="vpn",
             allowed_hosts=_hosts(

@@ -23,7 +23,7 @@ claude-local / open-webui (PHI-capable) ──VPN only──► VPN address:8444
         1. authN binds token → caller profile → allowed ingress (wrong door = 401, no upstream)
         2. allowlist (upstream, tool, pinned Composio toolkit/action/account, arg schema, pagination cap)
         3. Presidio on args (any error/timeout/truncated stream ⇒ BLOCK, zero upstream calls)
-           Cloudflare ingress: any detected entity ⇒ BLOCK (do not forward), audit phi_in_cloudflare_tool_args
+           external-nonphi mark: any detected entity ⇒ BLOCK (do not forward), audit phi_in_external_nonphi_tool_args
            VPN ingress: forward only the masked args (upstreams are no-PHI)
         4. forward only to stackjack.invalid or composio.invalid (Phase 1 mocks)
         5. field allowlist, then Presidio on the result (failure ⇒ discard, caller gets a reason code only)

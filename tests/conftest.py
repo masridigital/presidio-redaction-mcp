@@ -22,8 +22,6 @@ def _token(label: str) -> str:
 SECRETS = {
     "audit_hmac_key": _token("audit-hmac"),
     "grok_bot_token": _token("grok-bot"),
-    "grok_cf_access_client_id": _token("cf-client-id"),
-    "grok_cf_access_client_secret": _token("cf-client-secret"),
     "claude_local_token": _token("claude-local"),
     "open_webui_token": _token("open-webui"),
 }
@@ -48,13 +46,9 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         forward=None,
     )
     runtime = build_runtime(settings, audit, transport=double.transport())
-    with (
-        TestClient(runtime.vpn_app, base_url="http://testserver") as vpn,
-        TestClient(runtime.cloudflare_app, base_url="http://testserver") as cloudflare,
-    ):
+    with TestClient(runtime.vpn_app, base_url="http://testserver") as vpn:
         yield {
             "vpn": vpn,
-            "cloudflare": cloudflare,
             "runtime": runtime,
             "double": double,
         }
@@ -67,16 +61,38 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def mcp_headers(token: str, *, cloudflare: bool = False) -> dict[str, str]:
-    headers = {
+    del cloudflare
+    return {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json, text/event-stream",
         "Content-Type": "application/json",
         "mcp-protocol-version": "2025-03-26",
     }
-    if cloudflare:
-        headers["Cf-Access-Client-Id"] = SECRETS["grok_cf_access_client_id"]
-        headers["Cf-Access-Client-Secret"] = SECRETS["grok_cf_access_client_secret"]
-    return headers
+
+
+class _ServiceResponse:
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.content = text.encode()
+        self.status_code = 200
+
+    def json(self) -> dict:
+        import json
+
+        return json.loads(self.text)
+
+
+def grok_call(stack, name: str, arguments: dict) -> _ServiceResponse:
+    """Call the service as grok-bot. external-nonphi is a policy mark, not a listener."""
+    from presidio_redaction_mcp.auth import CallerIdentity
+
+    text = stack["vpn"].portal.call(
+        stack["runtime"].service.call_tool,
+        CallerIdentity(name="grok-bot", phi_capable=False, ingress="external-nonphi"),
+        name,
+        arguments,
+    )
+    return _ServiceResponse(text)
 
 
 def mcp_call(client: TestClient, token: str, name: str, arguments: dict, *, cloudflare: bool = False):

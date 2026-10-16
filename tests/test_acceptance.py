@@ -9,11 +9,12 @@ import httpx
 import pytest
 import yaml
 
+from presidio_redaction_mcp.auth import authenticate
 from presidio_redaction_mcp.config import load_settings
-from presidio_redaction_mcp.errors import ConfigError, FailClosed, PolicyError
+from presidio_redaction_mcp.errors import AuthError, ConfigError, FailClosed, PolicyError
 from presidio_redaction_mcp.upstream import CANONICAL_RESULT_SECRETS
 from scripts.generate_fixtures import HEADER, build
-from tests.conftest import SECRETS, mcp_call, tool_text
+from tests.conftest import SECRETS, grok_call, mcp_call, tool_text
 
 ROOT = Path(__file__).resolve().parents[1]
 CORPUS_PATH = ROOT / "tests" / "fixtures" / "synthetic_corpus.yaml"
@@ -38,13 +39,7 @@ def _vpn(stack, name, arguments, token="claude"):
 
 
 def _grok(stack, name, arguments):
-    return mcp_call(
-        stack["cloudflare"],
-        SECRETS["grok_bot_token"],
-        name,
-        arguments,
-        cloudflare=True,
-    )
+    return grok_call(stack, name, arguments)
 
 
 def test_01_inbound_args_are_masked_before_the_mock_upstream(stack):
@@ -240,23 +235,14 @@ def test_06_missing_invalid_and_wrong_assistant_tokens_are_401(stack):
     assert wrong_door.status_code == 401
     assert wrong_door.json()["reason_code"] == "ingress_not_allowed"
 
-    claude_on_cf = mcp_call(
-        stack["cloudflare"],
-        SECRETS["claude_local_token"],
-        "stackjack_health_check",
-        {"limit": 1},
-        cloudflare=True,
-    )
-    assert claude_on_cf.status_code == 401
-
-    grok_without_cf = mcp_call(
-        stack["cloudflare"],
-        SECRETS["grok_bot_token"],
-        "stackjack_health_check",
-        {"limit": 1},
-        cloudflare=False,
-    )
-    assert grok_without_cf.status_code == 401
+    for token in (SECRETS["claude_local_token"], SECRETS["grok_bot_token"]):
+        with pytest.raises(AuthError) as caught:
+            authenticate(
+                stack["runtime"].settings.callers,
+                ingress="external-nonphi",
+                authorization=f"Bearer {token}",
+            )
+        assert caught.value.reason_code == "ingress_not_allowed"
     assert stack["runtime"].upstreams["stackjack"].calls == []
     assert stack["runtime"].upstreams["composio"].calls == []
 
@@ -309,7 +295,7 @@ def test_08_cloudflare_egress_bytes_are_redacted_and_upstream_is_not_tunneled(st
     for secret in _secrets():
         assert secret.encode() not in blob
     text = blob.decode("utf-8", errors="replace")
-    assert "<MRN>" in text or "phi_in_cloudflare_tool_args" in text
+    assert "<MRN>" in text or "phi_in_external_nonphi_tool_args" in text
     for call in stack["runtime"].upstreams["stackjack"].calls + stack["runtime"].upstreams["composio"].calls:
         assert call.via == "direct"
         assert "cloudflare" not in call.base_url
@@ -334,7 +320,7 @@ def test_grok_phi_in_args_never_reaches_upstream(stack):
         "stackjack_search_docs",
         {"query": "Testy McFakerson MRN-SYN-0001234", "limit": 1},
     )
-    assert "phi_in_cloudflare_tool_args" in tool_text(response)
+    assert "phi_in_external_nonphi_tool_args" in tool_text(response)
     assert len(stack["runtime"].upstreams["stackjack"].calls) == before
     assert "MRN-SYN-0001234" not in response.text
 
@@ -480,11 +466,16 @@ def test_production_egress_is_the_two_upstreams_and_local_presidio_only(tmp_path
     monkeypatch.setenv("PRM_TLS_CERT_FILE", str(cert))
     monkeypatch.setenv("PRM_TLS_KEY_FILE", str(key))
     monkeypatch.setenv("PRM_PRESIDIO_CA_FILE", str(ca))
-    monkeypatch.setenv("PRM_ACCESS_ISSUER", "https://team.cloudflareaccess.com")
-    monkeypatch.setenv("PRM_ACCESS_AUDIENCE", "prm-test-audience")
-    jwks = tmp_path / "jwks.json"
-    jwks.write_text('{"keys":[{"kty":"RSA","kid":"prod","n":"aa","e":"AQAB"}]}', encoding="utf-8")
-    monkeypatch.setenv("PRM_ACCESS_JWKS_FILE", str(jwks))
+    with pytest.raises(ConfigError) as denied:
+        load_settings(ROOT / "config" / "allowlist.yaml", env="production")
+    assert denied.value.reason_code == "entra_required"
+    monkeypatch.setenv("PRM_AUTH_MODE", "entra")
+    monkeypatch.setenv("PRM_ENTRA_AUDIENCE", "api://presidio-redaction-mcp")
+    monkeypatch.setenv("PRM_ENTRA_CLIENT_CLAUDE", "11111111-1111-4111-8111-111111111111")
+    monkeypatch.setenv("PRM_ENTRA_CLIENT_OPEN_WEBUI", "22222222-2222-4222-8222-222222222222")
+    monkeypatch.setenv("PRM_ENTRA_CLIENT_GROK", "33333333-3333-4333-8333-333333333333")
+    allowlist_text = (ROOT / "config" / "allowlist.yaml").read_text(encoding="utf-8")
+    assert "cloudflareaccess.com" not in allowlist_text
     settings = load_settings(ROOT / "config" / "allowlist.yaml", env="production")
     assert settings.egress.allowed_hosts() == frozenset(
         {"stackjack.invalid", "composio.invalid", "127.0.0.1"}
@@ -494,7 +485,7 @@ def test_production_egress_is_the_two_upstreams_and_local_presidio_only(tmp_path
         settings.egress.check("https://127.0.0.1/analyze", purpose="upstream")
     with pytest.raises(PolicyError):
         settings.egress.check("https://api.github.com", purpose="upstream")
-    assert "testserver" not in settings.allowlist.listeners.cloudflare_allowed_hosts
+    assert settings.auth_mode == "entra"
     assert "testserver" not in settings.allowlist.listeners.vpn_allowed_hosts
     assert settings.allowlist.presidio.analyzer_url.startswith("https://127.0.0.1")
 

@@ -55,7 +55,6 @@ LOG_LEVEL=INFO
 PRM_CONFIG=/etc/presidio-redaction-mcp/allowlist.yaml
 PRM_BIND_HOST=127.0.0.1
 PRM_VPN_BIND_HOST=10.8.0.1
-PRM_CF_PORT=8443
 PRM_VPN_PORT=8444
 PRM_AUDIT_PATH=/var/lib/presidio-redaction-mcp/audit/audit.jsonl
 PRM_AUDIT_STATE=/var/lib/presidio-redaction-mcp/audit/config-sha
@@ -92,6 +91,8 @@ copy_presidio_server() {
   install -m 0640 "${REPO_DIR}/deploy/presidio/__init__.py" "${destination}/__init__.py"
   install -m 0640 "${REPO_DIR}/deploy/presidio/serve.py" "${destination}/serve.py"
   install -m 0640 "${REPO_DIR}/deploy/presidio/us_recognizers.py" "${destination}/us_recognizers.py"
+  install -d -m 0750 "$(prefix "/opt/presidio-anonymizer")"
+  install -m 0640 "${REPO_DIR}/deploy/presidio-anonymizer/app.py" "$(prefix "/opt/presidio-anonymizer/app.py")"
 }
 
 ensure_user() {
@@ -226,5 +227,6 @@ fi
 
 if [[ "${SKIP_SYSTEMD}" != "1" && "${ROOT}" == "/" ]]; then
   systemctl daemon-reload
-  systemctl enable presidio-analyzer.service presidio-anonymizer.service presidio-redaction-mcp.service
+  # The anonymizer unit is optional and stays disabled. Azure runs the digest-pinned image.
+  systemctl enable presidio-analyzer.service presidio-redaction-mcp.service
 fi

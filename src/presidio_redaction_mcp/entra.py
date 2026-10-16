@@ -69,6 +69,9 @@ class EntraTokenVerifier:
         self._now = now or time.monotonic
         self._cache: dict[str, Any] | None = None
         self._cache_until = 0.0
+        # Unknown-kid refreshes are limited to one per cache TTL. A later
+        # successful lookup does not clear this deadline.
+        self._miss_refresh_not_before = 0.0
 
     def verify(self, token: str | None) -> EntraPrincipal:
         if not token or token.count(".") != 2:
@@ -76,7 +79,7 @@ class EntraTokenVerifier:
         header = _header(token)
         if header.get("alg") != "RS256" or not header.get("kid"):
             raise AuthError("invalid_token")
-        key = _signing_key(self._jwks(), str(header["kid"]))
+        key = self._key_for(str(header["kid"]))
         try:
             claims = jwt.decode(
                 token,
@@ -142,9 +145,24 @@ class EntraTokenVerifier:
             raise AuthError("unknown_client")
         return client
 
-    def _jwks(self) -> dict[str, Any]:
+    def _key_for(self, kid: str) -> Any:
+        """Use the cached JWKS. On an unknown kid, refresh once, then wait out the TTL."""
+        try:
+            return _signing_key(self._jwks(), kid)
+        except AuthError as exc:
+            if exc.reason_code != "jwks_key_missing":
+                raise
+            now = self._now()
+            if now < self._miss_refresh_not_before:
+                raise
+            self._miss_refresh_not_before = now + self._ttl
+            self._cache = None
+            self._cache_until = 0.0
+            return _signing_key(self._jwks(force=True), kid)
+
+    def _jwks(self, *, force: bool = False) -> dict[str, Any]:
         now = self._now()
-        if self._cache is not None and now < self._cache_until:
+        if not force and self._cache is not None and now < self._cache_until:
             return self._cache
         try:
             payload = self._fetcher()

@@ -10,7 +10,7 @@ from presidio_redaction_mcp.audit import AuditLog
 from presidio_redaction_mcp.auth import authenticate
 from presidio_redaction_mcp.config import load_settings
 from presidio_redaction_mcp.errors import AuthError, ConfigError, FailClosed
-from tests.conftest import SECRETS, mcp_call, mcp_headers
+from tests.conftest import SECRETS, mcp_call
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -25,16 +25,17 @@ def test_cloudflared_artifacts_are_gone():
 
 def test_cloudflare_access_jwt_is_not_accepted(stack):
     assert not (ROOT / "src" / "presidio_redaction_mcp" / "access_jwt.py").exists()
-    headers = mcp_headers(SECRETS["grok_bot_token"], cloudflare=False)
-    headers["Cf-Access-Jwt-Assertion"] = "header.payload.signature"
-    headers["X-MS-CLIENT-PRINCIPAL"] = "claude-local"
-    response = stack["cloudflare"].post(
-        "/mcp/",
-        headers=headers,
-        json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "stackjack_health_check", "arguments": {"limit": 1}}},
-    )
-    assert response.status_code == 401
-    assert response.json()["reason_code"] == "cf_service_token_required"
+    example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    assert "CF_ACCESS" not in example
+    assert "cf_access_" not in (ROOT / "src" / "presidio_redaction_mcp" / "config.py").read_text(encoding="utf-8")
+    for ingress in ("cloudflare", "external-nonphi"):
+        with pytest.raises(AuthError) as cloudflare:
+            authenticate(
+                stack["runtime"].settings.callers,
+                ingress=ingress,
+                authorization=f"Bearer {SECRETS['grok_bot_token']}",
+            )
+        assert cloudflare.value.reason_code == "ingress_not_allowed"
     blob = stack["runtime"].audit.path.read_text(encoding="utf-8")
     assert "header.payload.signature" not in blob
     with pytest.raises(AuthError) as denied:

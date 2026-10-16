@@ -8,9 +8,10 @@ from pathlib import Path
 import pytest
 import yaml
 
+from presidio_redaction_mcp.auth import authenticate
 from presidio_redaction_mcp.config import load_settings
-from presidio_redaction_mcp.errors import ConfigError
-from tests.conftest import SECRETS, mcp_call, mcp_headers, tool_text
+from presidio_redaction_mcp.errors import AuthError, ConfigError
+from tests.conftest import SECRETS, grok_call, mcp_call, mcp_headers, tool_text
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -20,37 +21,23 @@ def _calls(stack) -> int:
 
 
 @pytest.mark.parametrize(
-    ("ingress", "token", "cf", "status", "reason"),
+    ("token", "status", "reason"),
     [
-        ("cloudflare", "grok_bot_token", "valid", 200, None),
-        ("cloudflare", "grok_bot_token", "missing", 401, "cf_service_token_required"),
-        ("cloudflare", "grok_bot_token", "bad-id", 401, "cf_service_token_required"),
-        ("cloudflare", "grok_bot_token", "bad-secret", 401, "cf_service_token_required"),
-        ("vpn", "grok_bot_token", "missing", 401, "ingress_not_allowed"),
-        ("vpn", "claude_local_token", "missing", 200, None),
-        ("cloudflare", "claude_local_token", "valid", 401, "ingress_not_allowed"),
-        ("vpn", "open_webui_token", "missing", 200, None),
-        ("cloudflare", "open_webui_token", "valid", 401, "ingress_not_allowed"),
-        ("vpn", None, "missing", 401, "invalid_token"),
-        ("vpn", "not-a-token", "missing", 401, "invalid_token"),
-        ("cloudflare", "", "valid", 401, "invalid_token"),
+        ("grok_bot_token", 401, "ingress_not_allowed"),
+        ("claude_local_token", 200, None),
+        ("open_webui_token", 200, None),
+        (None, 401, "invalid_token"),
+        ("not-a-token", 401, "invalid_token"),
     ],
 )
-def test_ingress_matrix(stack, ingress, token, cf, status, reason):
+def test_ingress_matrix(stack, token, status, reason):
     before = _calls(stack)
-    client = stack["vpn"] if ingress == "vpn" else stack["cloudflare"]
-    headers = mcp_headers(SECRETS.get(token, token or ""), cloudflare=cf == "valid")
+    headers = mcp_headers(SECRETS.get(token, token or ""))
     if token is None:
         headers.pop("Authorization", None)
     elif token == "":
         headers["Authorization"] = "Bearer "
-    if cf == "bad-id":
-        headers["Cf-Access-Client-Id"] = "wrong-client-id"
-        headers["Cf-Access-Client-Secret"] = SECRETS["grok_cf_access_client_secret"]
-    if cf == "bad-secret":
-        headers["Cf-Access-Client-Id"] = SECRETS["grok_cf_access_client_id"]
-        headers["Cf-Access-Client-Secret"] = "wrong-client-secret"
-    response = client.post(
+    response = stack["vpn"].post(
         "/mcp/",
         headers=headers,
         json={
@@ -68,16 +55,25 @@ def test_ingress_matrix(stack, ingress, token, cf, status, reason):
         assert "MRN-SYN-0001234" not in tool_text(response)
 
 
+def test_external_nonphi_mark_has_no_listener(stack):
+    for token in (SECRETS["grok_bot_token"], SECRETS["claude_local_token"], SECRETS["open_webui_token"]):
+        with pytest.raises(AuthError) as caught:
+            authenticate(
+                stack["runtime"].settings.callers,
+                ingress="external-nonphi",
+                authorization=f"Bearer {token}",
+            )
+        assert caught.value.reason_code == "ingress_not_allowed"
+
+
 def test_cloudflare_phi_is_blocked_and_vpn_phi_is_masked(stack):
     before = _calls(stack)
-    blocked = mcp_call(
-        stack["cloudflare"],
-        SECRETS["grok_bot_token"],
+    blocked = grok_call(
+        stack,
         "stackjack_search_docs",
         {"query": "Testy McFakerson MRN-SYN-0001234", "limit": 1},
-        cloudflare=True,
     )
-    assert "phi_in_cloudflare_tool_args" in tool_text(blocked)
+    assert "phi_in_external_nonphi_tool_args" in tool_text(blocked)
     assert _calls(stack) == before
     assert "MRN-SYN-0001234" not in blocked.text
 
@@ -96,9 +92,9 @@ def test_cloudflare_phi_is_blocked_and_vpn_phi_is_masked(stack):
     assert rows[-1]["caller"] == "open-webui"
     assert rows[-1]["ingress"] == "vpn"
     assert rows[-1]["phi_capable"] is False
-    grok_rows = [row for row in rows if row["reason_code"] == "phi_in_cloudflare_tool_args"]
+    grok_rows = [row for row in rows if row["reason_code"] == "phi_in_external_nonphi_tool_args"]
     assert grok_rows[-1]["caller"] == "grok-bot"
-    assert grok_rows[-1]["ingress"] == "cloudflare"
+    assert grok_rows[-1]["ingress"] == "external-nonphi"
     assert grok_rows[-1]["phi_capable"] is False
 
 
@@ -132,7 +128,7 @@ def test_there_is_no_baa_switch_for_grok(tmp_path, monkeypatch):
     door["callers"]["grok-bot"]["allowed_ingress"] = ["vpn"]
     cases.append(door)
     both = copy.deepcopy(raw)
-    both["callers"]["claude-local"]["allowed_ingress"] = ["cloudflare"]
+    both["callers"]["claude-local"]["allowed_ingress"] = ["external-nonphi"]
     cases.append(both)
     flag = copy.deepcopy(raw)
     flag["callers"]["grok-bot"]["baa"] = True

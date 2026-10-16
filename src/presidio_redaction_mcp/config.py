@@ -186,10 +186,8 @@ class CallerSpec(BaseModel):
     phi_capable: bool
     # Entra app ids of callers with baa true are the result-mask allowlist.
     baa: bool = False
-    allowed_ingress: list[Literal["cloudflare", "vpn"]]
+    allowed_ingress: list[Literal["external-nonphi", "vpn"]]
     token_secret: str
-    cf_access_client_id_secret: str | None = None
-    cf_access_client_secret_secret: str | None = None
     allowed_tools: list[str] = Field(default_factory=list)
     denied_result_fields: list[str] = Field(default_factory=list)
 
@@ -268,12 +266,9 @@ class ListenerSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     vpn_cidr: str = "10.8.0.0/24"
-    cloudflare_allowed_hosts: list[str]
     vpn_allowed_hosts: list[str]
-    access_issuer: str
-    access_audience: str
 
-    @field_validator("cloudflare_allowed_hosts", "vpn_allowed_hosts")
+    @field_validator("vpn_allowed_hosts")
     @classmethod
     def _hosts(cls, value: list[str]) -> list[str]:
         if not value:
@@ -350,30 +345,24 @@ class AllowlistFile(BaseModel):
         if "grok-bot" not in self.callers or "claude-local" not in self.callers or "open-webui" not in self.callers:
             raise ValueError("required_caller_missing")
         grok = self.callers["grok-bot"]
-        if grok.phi_capable or grok.baa or grok.allowed_ingress != ["cloudflare"]:
-            raise ValueError("grok_bot_must_be_cloudflare_non_phi")
-        if not grok.cf_access_client_id_secret or not grok.cf_access_client_secret_secret:
-            raise ValueError("grok_bot_cf_service_token_required")
+        if grok.phi_capable or grok.baa or grok.allowed_ingress != ["external-nonphi"]:
+            raise ValueError("grok_bot_must_be_external_nonphi")
         if set(grok.allowed_tools) != _GROK_TOOLS:
             raise ValueError("grok_bot_tools_must_be_structured")
         if not _GROK_DENIED_FIELDS <= set(grok.denied_result_fields):
             raise ValueError("grok_bot_free_text_fields_required")
         for caller in self.callers.values():
-            if "cloudflare" in caller.allowed_ingress and caller.phi_capable:
-                raise ValueError("cloudflare_ingress_cannot_be_phi_capable")
+            if "external-nonphi" in caller.allowed_ingress and caller.phi_capable:
+                raise ValueError("external_nonphi_cannot_be_phi_capable")
         claude = self.callers["claude-local"]
         if not claude.phi_capable or not claude.baa or claude.allowed_ingress != ["vpn"]:
             raise ValueError("phi_caller_must_be_vpn_only")
-        if claude.cf_access_client_id_secret or claude.cf_access_client_secret_secret:
-            raise ValueError("vpn_caller_must_not_bind_cf_token")
         if claude.allowed_tools or claude.denied_result_fields:
             raise ValueError("phi_caller_uses_the_shared_allowlist")
         webui = self.callers["open-webui"]
         # local-ai-stack has not cleared Open WebUI for PHI. Keep it non-BAA.
         if webui.phi_capable or webui.baa or webui.allowed_ingress != ["vpn"]:
             raise ValueError("open_webui_not_cleared_for_phi")
-        if webui.cf_access_client_id_secret or webui.cf_access_client_secret_secret:
-            raise ValueError("vpn_caller_must_not_bind_cf_token")
         if set(self.egress.upstream_hosts) != {"stackjack.invalid", "composio.invalid"}:
             raise ValueError("egress_upstreams_must_be_phase1_pins")
         if self.verifier.enabled and (self.deployment.target != "azure" or not self.deployment.baa):
@@ -396,9 +385,6 @@ class Settings(BaseModel):
     tls_cert_file: str | None
     tls_key_file: str | None
     presidio_ca_file: str | None
-    access_issuer: str = ""
-    access_audience: str = ""
-    access_jwks: dict[str, Any] = Field(default_factory=dict)
     audit_forward: str | None = None
     auth_mode: str = "bearer"
     entra_audience: str = ""
@@ -461,8 +447,8 @@ def load_settings(config_path: Path, *, env: str | None = None) -> Settings:
     except Exception as exc:
         if "verifier_refused_non_baa_target" in str(exc):
             raise ConfigError("verifier_refused_non_baa_target") from exc
-        if "cloudflare_ingress_cannot_be_phi_capable" in str(exc):
-            raise ConfigError("cloudflare_ingress_cannot_be_phi_capable") from exc
+        if "external_nonphi_cannot_be_phi_capable" in str(exc):
+            raise ConfigError("external_nonphi_cannot_be_phi_capable") from exc
         raise ConfigError("allowlist_rejected") from exc
     assert_verifier_permitted(parsed)
     recognizer_path = config_path.parent / parsed.recognizers_file
@@ -474,19 +460,17 @@ def load_settings(config_path: Path, *, env: str | None = None) -> Settings:
     hmac_key = secrets["audit_hmac_key"].encode("utf-8")
     callers = tuple(_caller_secret(name, spec, secrets) for name, spec in parsed.callers.items())
     _reject_duplicate_caller_tokens(callers)
-    issuer = os.environ.get("PRM_ACCESS_ISSUER", parsed.listeners.access_issuer).strip()
-    audience = os.environ.get("PRM_ACCESS_AUDIENCE", parsed.listeners.access_audience).strip()
     auth_mode = os.environ.get("PRM_AUTH_MODE", "bearer").strip() or "bearer"
     if auth_mode not in {"bearer", "entra"}:
         raise ConfigError("auth_mode_invalid")
+    if env_name == "production" and auth_mode != "entra":
+        raise ConfigError("entra_required")
     azure_internal = os.environ.get("PRM_AZURE_INTERNAL") == "1"
     parsed = _apply_presidio_url_overrides(parsed)
     if auth_mode == "entra":
         entra_audience, entra_clients = _entra_clients(parsed)
-        jwks: dict[str, Any] = {}
     else:
         entra_audience, entra_clients = "", ()
-        jwks = _load_access_jwks(env_name)
     baa_client_ids = frozenset(
         client.app_id.lower() for client in entra_clients if parsed.callers[client.name].baa
     )
@@ -499,12 +483,8 @@ def load_settings(config_path: Path, *, env: str | None = None) -> Settings:
         if set(parsed.egress.presidio_hosts) != {"127.0.0.1"}:
             raise ConfigError("presidio_must_be_loopback")
         tls_cert, tls_key, ca_file = _tls_paths()
-        if auth_mode == "entra":
-            if not entra_audience or not entra_clients:
-                raise ConfigError("entra_not_configured")
-        else:
-            if _PLACEHOLDER.search(issuer) or _PLACEHOLDER.search(audience) or not jwks:
-                raise ConfigError("access_not_configured")
+        if auth_mode != "entra" or not entra_audience or not entra_clients:
+            raise ConfigError("entra_required" if auth_mode != "entra" else "entra_not_configured")
         if not azure_internal:
             for path in (tls_cert, tls_key, ca_file):
                 if not path or not Path(path).is_file():
@@ -537,9 +517,6 @@ def load_settings(config_path: Path, *, env: str | None = None) -> Settings:
         tls_cert_file=tls_cert,
         tls_key_file=tls_key,
         presidio_ca_file=ca_file,
-        access_issuer=issuer,
-        access_audience=audience,
-        access_jwks=jwks,
         audit_forward=forward,
         auth_mode=auth_mode,
         entra_audience=entra_audience,
@@ -571,10 +548,6 @@ def _secret_names(parsed: AllowlistFile) -> set[str]:
     names = {"audit_hmac_key"}
     for caller in parsed.callers.values():
         names.add(caller.token_secret)
-        if caller.cf_access_client_id_secret:
-            names.add(caller.cf_access_client_id_secret)
-        if caller.cf_access_client_secret_secret:
-            names.add(caller.cf_access_client_secret_secret)
     return names
 
 
@@ -658,43 +631,12 @@ def _tls_paths() -> tuple[str | None, str | None, str | None]:
     return cert, key, ca_file
 
 
-def _load_access_jwks(env_name: str) -> dict[str, Any]:
-    override = os.environ.get("PRM_ACCESS_JWKS_FILE")
-    credentials = os.environ.get("CREDENTIALS_DIRECTORY")
-    candidates: list[Path] = []
-    if override:
-        candidates.append(Path(override))
-    if credentials:
-        candidates.append(Path(credentials) / "access_jwks")
-    candidates.append(Path("/etc/presidio-redaction-mcp/access-jwks.json"))
-    for path in candidates:
-        if path.is_file():
-            try:
-                loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-            except Exception as exc:
-                raise ConfigError("access_jwks_invalid") from exc
-            if isinstance(loaded, str):
-                import json
-
-                loaded = json.loads(loaded)
-            if not isinstance(loaded, dict) or not isinstance(loaded.get("keys"), list) or not loaded["keys"]:
-                raise ConfigError("access_jwks_invalid")
-            return loaded
-    if env_name == "production":
-        raise ConfigError("access_not_configured")
-    return {}
-
-
 def _caller_secret(name: str, spec: CallerSpec, secrets: dict[str, str]) -> CallerSecret:
-    cf_id = secrets[spec.cf_access_client_id_secret] if spec.cf_access_client_id_secret else None
-    cf_secret = secrets[spec.cf_access_client_secret_secret] if spec.cf_access_client_secret_secret else None
     return CallerSecret(
         name=name,
         phi_capable=spec.phi_capable,
         allowed_ingress=frozenset(spec.allowed_ingress),
         token_sha256=digest(secrets[spec.token_secret]),
-        cf_client_id_sha256=digest(cf_id) if cf_id is not None else None,
-        cf_client_secret_sha256=digest(cf_secret) if cf_secret is not None else None,
     )
 
 

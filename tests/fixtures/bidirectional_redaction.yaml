@@ -5,7 +5,7 @@ inbound_vpn:
   text: mask
   base64: block
   json_key: block
-inbound_cloudflare: block
+inbound_external_nonphi: block
 outbound:
   text: mask
   base64: block

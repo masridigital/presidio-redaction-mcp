@@ -31,6 +31,14 @@ param analyzerImage string
 @description('Digest-pinned anonymizer image. The analyzer image is not this one.')
 param anonymizerImage string
 
+var containerImageDigest = last(split(containerImage, '@sha256:'))
+var analyzerImageDigest = last(split(analyzerImage, '@sha256:'))
+var anonymizerImageDigest = last(split(anonymizerImage, '@sha256:'))
+
+assert containerImageDigestPinned = indexOf(containerImage, '@sha256:') > 0 && length(containerImageDigest) == 64
+assert analyzerImageDigestPinned = indexOf(analyzerImage, '@sha256:') > 0 && length(analyzerImageDigest) == 64
+assert anonymizerImageDigestPinned = indexOf(anonymizerImage, '@sha256:') > 0 && length(anonymizerImageDigest) == 64
+
 @description('Container Apps infrastructure subnet. Must be /21 or larger and dedicated.')
 param infraSubnetPrefix string = '10.40.0.0/21'
 
@@ -43,6 +51,7 @@ param privateEndpointSubnetPrefix string = '10.40.9.0/24'
 var namePrefix = 'prm'
 var vnetPrefix = '10.40.0.0/16'
 var secretsUserRole = '4633458b-17de-408a-b874-0445c86b69e6'
+var acrPullRole = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 
 resource nsg 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
   name: '${namePrefix}-nsg'
@@ -263,6 +272,72 @@ resource kvDnsGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@202
   }
 }
 
+resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
+  name: '${namePrefix}acr${uniqueString(resourceGroup().id)}'
+  location: location
+  sku: {
+    name: 'Premium'
+  }
+  properties: {
+    adminUserEnabled: false
+    publicNetworkAccess: 'Disabled'
+    networkRuleBypassOptions: 'None'
+  }
+}
+
+resource acrDns 'Microsoft.Network/privateDnsZones@2020-06-01' = {
+  name: 'privatelink.azurecr.io'
+  location: 'global'
+}
+
+resource acrDnsLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
+  parent: acrDns
+  name: '${namePrefix}-acr-dns'
+  location: 'global'
+  properties: {
+    registrationEnabled: false
+    virtualNetwork: {
+      id: vnet.id
+    }
+  }
+}
+
+resource acrEndpoint 'Microsoft.Network/privateEndpoints@2023-11-01' = {
+  name: '${namePrefix}-acr-pe'
+  location: location
+  properties: {
+    subnet: {
+      id: '${vnet.id}/subnets/private-endpoints'
+    }
+    privateLinkServiceConnections: [
+      {
+        name: 'registry'
+        properties: {
+          privateLinkServiceId: acr.id
+          groupIds: [
+            'registry'
+          ]
+        }
+      }
+    ]
+  }
+}
+
+resource acrDnsGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-11-01' = {
+  parent: acrEndpoint
+  name: 'registry'
+  properties: {
+    privateDnsZoneConfigs: [
+      {
+        name: 'registry'
+        properties: {
+          privateDnsZoneId: acrDns.id
+        }
+      }
+    ]
+  }
+}
+
 resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: '${namePrefix}-cae'
   location: location
@@ -292,6 +367,12 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
     managedEnvironmentId: environment.id
     configuration: {
       activeRevisionsMode: 'Single'
+      registries: [
+        {
+          server: acr.properties.loginServer
+          identity: 'system'
+        }
+      ]
       ingress: {
         external: false
         targetPort: 8080
@@ -405,6 +486,16 @@ resource kvRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: kv
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', secretsUserRole)
+    principalId: app.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource acrRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(acr.id, app.id, acrPullRole)
+  scope: acr
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', acrPullRole)
     principalId: app.identity.principalId
     principalType: 'ServicePrincipal'
   }

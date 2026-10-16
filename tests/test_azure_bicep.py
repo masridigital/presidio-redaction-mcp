@@ -28,6 +28,28 @@ def test_bicep_keeps_the_analyzer_private_and_denies_egress():
     assert "/organizations/" not in policy
     assert 'name="X-MS-CLIENT-PRINCIPAL"' in policy
     assert "Cf-Access-Jwt-Assertion" in policy
+    assert "Phi.Caller" in policy
+    assert "NonPhi.Caller" in policy
+    assert "access_as_user" in policy
+    assert "SelectMany" in policy
+    assert "Split(" in policy
+    assert "GetValueOrDefault(&quot;scp&quot;, new string[]{}).Contains" not in policy
+    assert "containerImageDigestPinned" in bicep
+    assert "analyzerImageDigestPinned" in bicep
+    assert "anonymizerImageDigestPinned" in bicep
+    assert "indexOf(containerImage, '@sha256:') > 0" in bicep
+    assert "length(containerImageDigest) == 64" in bicep
+    deploy = (ROOT / "docs" / "azure-deploy.md").read_text(encoding="utf-8")
+    assert "Azure Container Registry" in deploy
+    assert "10.40.9.0/24" in deploy
+    assert "privatelink.azurecr.io" in bicep
+    assert "Microsoft.ContainerRegistry/registries" in bicep
+    assert "7f951dda-4ed3-4680-a7ca-43fe172d538d" in bicep
+    assert "'registry'" in bicep
+    assert "adminUserEnabled: false" in bicep
+    assert "networkRuleBypassOptions: 'None'" in bicep
+    assert "identity: 'system'" in bicep
+    assert "mcr.microsoft.com" not in bicep
     unit = (ROOT / "deploy" / "systemd" / "presidio-redaction-mcp.service").read_text(encoding="utf-8")
     assert "cloudflared.service" not in unit
     assert "docker.service" not in unit

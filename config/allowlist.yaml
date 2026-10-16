@@ -20,16 +20,9 @@ presidio:
   score_threshold: 0.4
 listeners:
   vpn_cidr: 10.8.0.0/24
-  cloudflare_allowed_hosts:
-    - 127.0.0.1
-    - 127.0.0.1:*
-    - localhost
-    - localhost:*
   vpn_allowed_hosts:
     - 10.8.0.1
     - 10.8.0.1:*
-  access_issuer: https://configure-before-deploy.cloudflareaccess.com
-  access_audience: configure-before-deploy
 limits:
   requests_per_minute: 120
   max_depth: 6
@@ -54,10 +47,8 @@ callers:
     phi_capable: false
     baa: false
     allowed_ingress:
-      - cloudflare
+      - external-nonphi
     token_secret: grok_bot_token
-    cf_access_client_id_secret: grok_cf_access_client_id
-    cf_access_client_secret_secret: grok_cf_access_client_secret
     allowed_tools:
       - stackjack_health_check
       - stackjack_get_service_status

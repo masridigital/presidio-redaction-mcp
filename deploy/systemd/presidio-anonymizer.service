@@ -1,5 +1,5 @@
 [Unit]
-Description=Presidio anonymizer (native, loopback TLS)
+Description=Optional native Presidio anonymizer (not enabled; Azure image is primary)
 After=network-online.target
 Wants=network-online.target
 
@@ -11,12 +11,12 @@ WorkingDirectory=/opt/presidio-anonymizer
 Environment=PRESIDIO_ROLE=anonymizer
 Environment=PRESIDIO_BIND=127.0.0.1
 Environment=PRESIDIO_PORT=5002
-Environment=PRESIDIO_CERT=/etc/presidio-redaction-mcp/tls/internal.pem
-Environment=PRESIDIO_KEY=/etc/presidio-redaction-mcp/tls/internal.key
 Environment=HOME=/var/lib/presidio-anonymizer
 Environment=PYTHONDONTWRITEBYTECODE=1
-# The anonymizer in the primary deploy is the digest-pinned image. This optional unit stays on loopback.
-ExecStart=/opt/presidio-anonymizer/venv/bin/python -c 'raise SystemExit(0)'
+# Azure keeps the digest-pinned anonymizer image on port 3001. This optional
+# unit is not enabled. The installer ships app.py, which binds PRESIDIO_PORT.
+ConditionPathExists=/opt/presidio-anonymizer/app.py
+ExecStart=/opt/presidio-anonymizer/venv/bin/python /opt/presidio-anonymizer/app.py
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=yes

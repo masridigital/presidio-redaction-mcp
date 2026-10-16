@@ -96,7 +96,7 @@ def build_bidirectional() -> dict:
         "header": "SYNTHETIC",
         "banner": HEADER,
         "inbound_vpn": {"text": "mask", "base64": "block", "json_key": "block"},
-        "inbound_cloudflare": "block",
+        "inbound_external_nonphi": "block",
         "outbound": {"text": "mask", "base64": "block", "json_key": "block"},
         "block_reasons": {"base64": "unanalyzable_content", "json_key": "pii_in_key"},
         "placeholders": {
