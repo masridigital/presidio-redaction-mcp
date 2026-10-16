@@ -1,5 +1,7 @@
 [Unit]
 Description=Presidio redaction MCP proxy
+# presidio-analyzer is built from deploy/presidio/Dockerfile via compose.
+# mcr.microsoft.com/presidio-analyzer is deprecated and is not started.
 After=docker.service network-online.target cloudflared.service
 Wants=network-online.target
 Requires=docker.service

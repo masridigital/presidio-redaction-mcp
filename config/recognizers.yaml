@@ -12,6 +12,12 @@ recognizers:
       - name: mrn_labeled
         regex: '(?i)\b(?:medical\s+record\s+number|m\.r\.n\.|mrn|mr\s*#)[\s:#-]*\d{6,10}\b'
         score: 0.9
+      - name: mrn_context
+        regex: '(?i)\b(?:medical\s+record(?:\s+number)?|m\.r\.n\.|mrn|chart\s+number|patient\s+id)(?!\w)[^0-9]{1,24}\d{6,10}\b'
+        score: 0.9
+      - name: mrn_context_trailing
+        regex: '(?i)\b\d{6,10}\b[^A-Za-z0-9]{0,8}(?:is\s+the\s+)?mrn\b'
+        score: 0.9
   - name: synthetic_record
     entity: RECORD_ID
     patterns:
@@ -21,6 +27,9 @@ recognizers:
       - name: record_labeled
         regex: '(?i)\b(?:record(?:\s+(?:id|number))?|rec)[\s:#-]*\d{5,12}\b'
         score: 0.9
+      - name: record_context
+        regex: '(?i)\b(?:record\s+(?:id|number)|rec\s*#)(?!\w)[^0-9]{0,16}\d{5,12}\b'
+        score: 0.9
   - name: synthetic_account
     entity: ACCOUNT_ID
     patterns:
@@ -29,6 +38,12 @@ recognizers:
         score: 0.95
       - name: account_labeled
         regex: '(?i)\b(?:account(?:\s+(?:number|id|no))?|acct\.?)[\s:#-]*\d{6,17}\b'
+        score: 0.9
+      - name: account_context
+        regex: '(?i)\b(?:account\s+(?:number|id|no)|acct\.?|member\s+id)(?!\w)[^0-9]{0,16}\d{6,17}\b'
+        score: 0.9
+      - name: account_context_trailing
+        regex: '(?i)\b\d{6,17}\b[^A-Za-z0-9]{0,8}(?:is\s+the\s+)?account\s+(?:number|id)\b'
         score: 0.9
   - name: synthetic_npi
     entity: NPI

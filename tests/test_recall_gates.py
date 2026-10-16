@@ -90,7 +90,7 @@ def test_each_entity_with_adversarial_rows_meets_the_floor(stack):
 def test_negatives_are_not_treated_as_entities(stack):
     corpus = _corpus()
     redactor = stack["runtime"].service.redactor
-    text = "ticket #24058 version v1.2.3 from 192.0.2.10 in Q3 2026"
+    text = "ticket #24058 version v1.2.3 in Q3 2026"
     rewritten, _counts = stack["vpn"].portal.call(redactor.redact, text)
     assert rewritten == text
     for negative in corpus["negatives"]:

@@ -2,11 +2,25 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 from typing import Any
 
 import httpx
+
+# Same shapes Presidio 2.2.362 scores at 0.6: IpRecognizer IPv4 and
+# DateRecognizer yyyy-mm-dd. The unit job does not install Presidio, so the
+# patterns live here and the native test checks them against the real engine.
+_IPV4 = re.compile(
+    r"\b(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)"
+    r"\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)"
+    r"\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)"
+    r"\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b"
+)
+_ISO_DATE = re.compile(
+    r"\b(\d{4}-(?:[1-9]|0[1-9]|1[0-2])-(?:[1-9]|0[1-9]|[1-2][0-9]|3[0-1]))\b"
+)
 
 
 class PresidioDouble:
@@ -64,6 +78,34 @@ class PresidioDouble:
         return None
 
 
+def _builtin_spans(text: str) -> list[dict[str, Any]]:
+    """IP_ADDRESS and DATE_TIME hits Presidio's built-ins return at score 0.6."""
+    spans: list[dict[str, Any]] = []
+    for match in _IPV4.finditer(text):
+        try:
+            ipaddress.ip_address(match.group(0))
+        except ValueError:
+            continue
+        spans.append(
+            {
+                "entity_type": "IP_ADDRESS",
+                "start": match.start(),
+                "end": match.end(),
+                "score": 0.6,
+            }
+        )
+    for match in _ISO_DATE.finditer(text):
+        spans.append(
+            {
+                "entity_type": "DATE_TIME",
+                "start": match.start(1),
+                "end": match.end(1),
+                "score": 0.6,
+            }
+        )
+    return spans
+
+
 def _detect(text: str, recognizers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     spans: list[dict[str, Any]] = []
     lowered = text.lower()
@@ -97,6 +139,7 @@ def _detect(text: str, recognizers: list[dict[str, Any]]) -> list[dict[str, Any]
                     }
                 )
                 start = index + len(needle)
+    spans.extend(_builtin_spans(text))
     spans.sort(key=lambda item: (item["start"], -(item["end"] - item["start"])))
     kept: list[dict[str, Any]] = []
     cursor = -1

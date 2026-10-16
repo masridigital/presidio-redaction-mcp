@@ -55,7 +55,7 @@ def test_install_sh_is_idempotent(tmp_path: Path):
     assert "docker.service" in unit
 
 
-def test_compose_pins_official_presidio_and_publishes_no_presidio_ports():
+def test_compose_builds_the_custom_analyzer_and_publishes_no_presidio_ports():
     text = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     compose = yaml.safe_load(text)
     analyzer = compose["services"]["presidio-analyzer"]
@@ -63,8 +63,11 @@ def test_compose_pins_official_presidio_and_publishes_no_presidio_ports():
     assert "ports" not in analyzer
     assert "ports" not in anonymizer
     assert "ports" not in compose["services"]["presidio-tls"]
-    assert analyzer["image"].startswith("mcr.microsoft.com/presidio-analyzer:2.2.362@sha256:")
+    assert analyzer["build"]["dockerfile"] == "deploy/presidio/Dockerfile"
+    assert analyzer["image"] == "presidio-analyzer:2.2.362"
+    assert not str(analyzer.get("image", "")).startswith("mcr.microsoft.com/")
     assert anonymizer["image"].startswith("mcr.microsoft.com/presidio-anonymizer:2.2.362@sha256:")
+    assert "deprecated" in text
     assert "ghcr.io" not in text
     assert compose["networks"]["presidio_internal"]["internal"] is True
     published = text.split("ports:", 1)[1]
@@ -73,6 +76,19 @@ def test_compose_pins_official_presidio_and_publishes_no_presidio_ports():
     assert "secrets:" in text
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     assert "@sha256:" in dockerfile.splitlines()[0]
+    custom = (ROOT / "deploy" / "presidio" / "Dockerfile").read_text(encoding="utf-8")
+    assert "\nFROM python:3.12-slim@sha256:" in "\n" + custom
+    assert "--require-hashes" in custom
+    assert 'presidio.serve' in custom
+    assert "mcr.microsoft.com" not in custom
+    serve = (ROOT / "deploy" / "presidio" / "serve.py").read_text(encoding="utf-8")
+    assert "sys.path" not in serve
+    assert "register_us_recognizers" in serve
+    assert '"/analyze"' in serve
+    assert '"/health"' in serve
+    unit = (ROOT / "deploy" / "systemd" / "presidio-redaction-mcp.service").read_text(encoding="utf-8")
+    assert "deploy/presidio/Dockerfile" in unit
+    assert "mcr.microsoft.com/presidio-analyzer is deprecated" in unit
 
 
 def test_systemd_unit_restarts_on_failure():

@@ -61,6 +61,16 @@ def build() -> dict:
         {"entity": "RECORD_ID", "kind": "canonical", "value": "REC 100045"},
         {"entity": "NPI", "kind": "canonical", "value": "NPI: 0000000000"},
         {"entity": "NPI", "kind": "canonical", "value": "NPI 1234567890"},
+        # Unlabeled digit runs. A context word sits nearby; the digits are not a prefix token.
+        {"entity": "MRN", "kind": "canonical", "value": "medical record is 0001234"},
+        {"entity": "MRN", "kind": "canonical", "value": "chart number is 845221901"},
+        {"entity": "MRN", "kind": "canonical", "value": "patient id is 1000456"},
+        {"entity": "MRN", "kind": "canonical", "value": "0001234 is the mrn"},
+        {"entity": "ACCOUNT_ID", "kind": "canonical", "value": "account number is 99990000"},
+        {"entity": "ACCOUNT_ID", "kind": "canonical", "value": "member id is 0011223344"},
+        {"entity": "ACCOUNT_ID", "kind": "canonical", "value": "99990000 is the account number"},
+        {"entity": "RECORD_ID", "kind": "canonical", "value": "record number is 8844221"},
+        {"entity": "RECORD_ID", "kind": "canonical", "value": "rec # is 000042"},
     ]
     return {
         "header": "SYNTHETIC",
@@ -68,7 +78,14 @@ def build() -> dict:
         "seed": SEED,
         "faker_email": generated_email,
         "cases": cases,
-        "negatives": ["#24058", "v1.2.3", "192.0.2.10", "Q3 2026"],
+        "negatives": ["#24058", "v1.2.3", "Q3 2026"],
+        # Nearby words that must not promote a digit run. 192.0.2.10 is omitted:
+        # Presidio's IP recognizer catches TEST-NET-1, so it is not a negative.
+        "context_false_positives": [
+            "order 1000456 shipped",
+            "page 000042 of the packet",
+            "account for ticket 240581",
+        ],
         "base64_example": base64.b64encode(b"MRN-SYN-0001234").decode("ascii"),
     }
 
