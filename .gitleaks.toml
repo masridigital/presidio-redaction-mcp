@@ -1,0 +1,16 @@
+title = "presidio-redaction-mcp"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Synthetic fixtures and documented placeholders. No live credentials."
+paths = [
+  '''tests/fixtures/''',
+  '''\.env\.example''',
+  '''docs/litellm-gateway-spike\.md''',
+]
+regexes = [
+  '''replace-with-vault''',
+  '''ca_day1_uptimerobot_nonphi_ro''',
+]

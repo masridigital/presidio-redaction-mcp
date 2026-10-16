@@ -1,0 +1,86 @@
+# SYNTHETIC — FAKE DATA — NOT REAL PERSONS
+header: SYNTHETIC
+banner: SYNTHETIC — FAKE DATA — NOT REAL PERSONS
+seed: 4242
+faker_email: nanderson@example.com
+cases:
+- entity: PERSON
+  kind: canonical
+  value: Testy McFakerson
+- entity: PERSON
+  kind: canonical
+  value: Jane Synthetic-Doe
+- entity: PERSON
+  kind: canonical
+  value: Pat Placeholder
+- entity: PERSON
+  kind: adversarial
+  value: Testy McFakerson
+  form: json_key
+- entity: EMAIL_ADDRESS
+  kind: canonical
+  value: fake.user@example.com
+- entity: EMAIL_ADDRESS
+  kind: canonical
+  value: nanderson@example.com
+- entity: EMAIL_ADDRESS
+  kind: canonical
+  value: pat.placeholder@example.org
+- entity: MRN
+  kind: canonical
+  value: MRN-SYN-0001234
+- entity: MRN
+  kind: adversarial
+  value: M R N - S Y N - 0001234
+- entity: MRN
+  kind: adversarial
+  value: MRN-SYN-0001234
+  form: base64
+- entity: RECORD_ID
+  kind: canonical
+  value: REC-SYN-000042
+- entity: ACCOUNT_ID
+  kind: canonical
+  value: ACCT-SYN-99990000
+- entity: NPI
+  kind: canonical
+  value: NPI-SYN-1234567890
+- entity: US_SSN
+  kind: canonical
+  value: 000-00-0000
+- entity: US_SSN
+  kind: canonical
+  value: 666-12-3456
+- entity: US_SSN
+  kind: canonical
+  value: 900-00-0001
+- entity: US_SSN
+  kind: adversarial
+  value: 666.12.3456
+- entity: PHONE_NUMBER
+  kind: canonical
+  value: 555-0100
+- entity: PHONE_NUMBER
+  kind: canonical
+  value: 555-0199
+- entity: DATE_OF_BIRTH
+  kind: canonical
+  value: '1900-01-01'
+- entity: DATE_OF_BIRTH
+  kind: canonical
+  value: '1901-02-02'
+- entity: CREDIT_CARD
+  kind: canonical
+  value: 4111 1111 1111 1111
+- entity: CREDIT_CARD
+  kind: canonical
+  value: 4111-1111-1111-1111
+- entity: LOCATION
+  kind: canonical
+  value: 123 Fake Street, Testville, ZZ 00000
+negatives:
+- '#24058'
+- v1.2.3
+- 192.0.2.10
+- Q3 2026
+base64_example: TVJOLVNZTi0wMDAxMjM0

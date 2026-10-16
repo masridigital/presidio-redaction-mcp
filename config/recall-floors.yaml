@@ -1,0 +1,17 @@
+# Minimum recall on the synthetic corpus. A miss fails CI.
+# Canonical rows must all be caught. Adversarial rows must not leak:
+# masked or blocked both count as caught. Negatives must pass through.
+canonical_floor: 1.0
+adversarial_floor: 1.0
+entities:
+  - PERSON
+  - US_SSN
+  - MRN
+  - RECORD_ID
+  - ACCOUNT_ID
+  - NPI
+  - EMAIL_ADDRESS
+  - PHONE_NUMBER
+  - CREDIT_CARD
+  - LOCATION
+  - DATE_OF_BIRTH

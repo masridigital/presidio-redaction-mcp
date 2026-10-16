@@ -1,0 +1,9 @@
+# prm-docker-user
+# Docker publishes ports by writing iptables directly. UFW alone does not see them.
+# Drop forwarded traffic except established flows and loopback.
+*filter
+:DOCKER-USER - [0:0]
+-A DOCKER-USER -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
+-A DOCKER-USER -i lo -j RETURN
+-A DOCKER-USER -j DROP
+COMMIT
