@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -12,13 +13,19 @@ from presidio_redaction_mcp.logging_setup import configure_logging
 from tests.presidio_double import PresidioDouble
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _token(label: str) -> str:
+    return hashlib.sha256(f"presidio-redaction-mcp-test-secret-{label}".encode()).hexdigest()
+
+
 SECRETS = {
-    "audit_hmac_key": "test-hmac-key-not-a-secret-000000",
-    "grok_bot_token": "test-grok-token-not-a-secret",
-    "grok_cf_access_client_id": "test-cf-client-id",
-    "grok_cf_access_client_secret": "test-cf-client-secret",
-    "claude_local_token": "test-claude-token-not-a-secret",
-    "open_webui_token": "test-webui-token-not-a-secret",
+    "audit_hmac_key": _token("audit-hmac"),
+    "grok_bot_token": _token("grok-bot"),
+    "grok_cf_access_client_id": _token("cf-client-id"),
+    "grok_cf_access_client_secret": _token("cf-client-secret"),
+    "claude_local_token": _token("claude-local"),
+    "open_webui_token": _token("open-webui"),
 }
 
 
@@ -34,7 +41,12 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     )
     configure_logging(settings.recognizers, "DEBUG", settings.secret_values)
     double = PresidioDouble()
-    audit = AuditLog(tmp_path / "audit.jsonl", tmp_path / "config-sha")
+    audit = AuditLog(
+        tmp_path / "audit.jsonl",
+        tmp_path / "config-sha",
+        settings.audit_hmac_key,
+        forward=None,
+    )
     runtime = build_runtime(settings, audit, transport=double.transport())
     with (
         TestClient(runtime.vpn_app, base_url="http://testserver") as vpn,
@@ -105,6 +117,7 @@ def build_test_runtime(
     transport=None,
     upstreams=None,
     rate_limiter=None,
+    entra=None,
 ):
     """Runtime pointed at the in-test Presidio transport. Caller closes the HTTP client."""
     apply_test_secrets(monkeypatch)
@@ -114,11 +127,12 @@ def build_test_runtime(
         "http://presidio.test/anonymize",
     )
     configure_logging(settings.recognizers, "DEBUG", settings.secret_values)
-    audit = AuditLog(tmp_path / "audit.jsonl", tmp_path / "config-sha")
+    audit = AuditLog(tmp_path / "audit.jsonl", tmp_path / "config-sha", settings.audit_hmac_key)
     return build_runtime(
         settings,
         audit,
         transport=transport,
         upstreams=upstreams,
         rate_limiter=rate_limiter,
+        entra=entra,
     )

@@ -7,8 +7,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
-    PRESIDIO_BIND=0.0.0.0 \
+    PRESIDIO_BIND=127.0.0.1 \
     PRESIDIO_PORT=3000 \
+    PRESIDIO_SCORE_THRESHOLD=0.4 \
+    PRESIDIO_RECOGNIZERS=/app/recognizers.yaml \
     PRESIDIO_SPACY_MODEL=en_core_web_lg \
     HOME=/tmp
 
@@ -18,6 +20,7 @@ RUN groupadd --gid 65532 app \
 WORKDIR /app
 COPY requirements.txt requirements-presidio.txt ./
 COPY deploy/presidio /app/presidio
+COPY config/recognizers.yaml /app/recognizers.yaml
 RUN python -m pip install --require-hashes -r requirements.txt -r requirements-presidio.txt \
     && chown -R 65532:65532 /app
 

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import re
+from collections import Counter
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -37,11 +39,19 @@ _POISONED_DESCRIPTION = re.compile(
 )
 _WILDCARD = re.compile(r"[\*\?\[\]]|(?:^|[_\-])all(?:[_\-]|$)")
 _LIST_ALL = re.compile(r"list[_-]?all", re.IGNORECASE)
-_VERB = re.compile(
-    r"(?:^|[_\-])(write|send|create|update|delete|export|bulk|download|upload|"
-    r"post|put|patch|insert|remove|execute|reply|forward|share|add|edit|new)(?:[_\-]|$)",
+_READ_VERB = re.compile(
+    r"(?:^|[_\-])(get|list|search|health|status|fetch)(?:[_\-]|$)",
     re.IGNORECASE,
 )
+_WRITE_TOKEN = re.compile(
+    r"(?:^|[_\-])(post|put|patch|delete|bulk|send|create|update|remove|execute|reply|forward|share|add|edit|new|write)(?:[_\-]|$)",
+    re.IGNORECASE,
+)
+_PLACEHOLDER = re.compile(
+    r"replace-with|changeme|placeholder|not-a-secret|configure-before-deploy",
+    re.IGNORECASE,
+)
+_GUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _ACCOUNT = re.compile(r"^ca_[a-z0-9_]{8,64}$")
 
 
@@ -87,12 +97,20 @@ class ToolSpec(BaseModel):
     action_id: str | None = None
     connected_account_id: str | None = None
 
-    @field_validator("name", "toolkit", "action_id")
+    @field_validator("name", "action_id")
     @classmethod
-    def _idents(cls, value: str | None) -> str | None:
+    def _tool_names(cls, value: str | None) -> str | None:
         if value is None:
             return value
         _reject_identifier(value, field="tool")
+        return value
+
+    @field_validator("toolkit")
+    @classmethod
+    def _toolkit(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        _reject_identifier(value, field="toolkit")
         return value
 
     @model_validator(mode="after")
@@ -132,14 +150,48 @@ class UpstreamSpec(BaseModel):
         return value
 
 
+# grok-bot stays usable on structured fields. Free text, dates, and IPs are
+# dropped before redaction. A hit that remains in an allowed field is still blocked.
+_GROK_TOOLS = frozenset(
+    {
+        "stackjack_health_check",
+        "stackjack_get_service_status",
+        "UPTIMEROBOT_GET_MONITORS",
+    }
+)
+_GROK_DENIED_FIELDS = frozenset(
+    {
+        "summary",
+        "description",
+        "text",
+        "body",
+        "url",
+        "friendly_name",
+        "date",
+        "datetime",
+        "created_at",
+        "updated_at",
+        "timestamp",
+        "dob",
+        "ip",
+        "ip_address",
+        "client_ip",
+    }
+)
+
+
 class CallerSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     phi_capable: bool
+    # Entra app ids of callers with baa true are the result-mask allowlist.
+    baa: bool = False
     allowed_ingress: list[Literal["cloudflare", "vpn"]]
     token_secret: str
     cf_access_client_id_secret: str | None = None
     cf_access_client_secret_secret: str | None = None
+    allowed_tools: list[str] = Field(default_factory=list)
+    denied_result_fields: list[str] = Field(default_factory=list)
 
 
 class DeploymentSpec(BaseModel):
@@ -212,6 +264,51 @@ class EgressSpec(BaseModel):
     test_hosts: list[str] = Field(default_factory=list)
 
 
+class ListenerSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    vpn_cidr: str = "10.8.0.0/24"
+    cloudflare_allowed_hosts: list[str]
+    vpn_allowed_hosts: list[str]
+    access_issuer: str
+    access_audience: str
+
+    @field_validator("cloudflare_allowed_hosts", "vpn_allowed_hosts")
+    @classmethod
+    def _hosts(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("allowed_hosts_empty")
+        for host in value:
+            lowered = host.lower()
+            if "testserver" in lowered or lowered in {"*", "0.0.0.0", "0.0.0.0:*"}:  # nosec B104
+                raise ValueError("allowed_host_rejected")
+        return value
+
+    @field_validator("vpn_cidr")
+    @classmethod
+    def _cidr(cls, value: str) -> str:
+        import ipaddress
+
+        try:
+            network = ipaddress.ip_network(value, strict=False)
+        except ValueError as exc:
+            raise ValueError("vpn_cidr_invalid") from exc
+        if network.version != 4:
+            raise ValueError("vpn_cidr_invalid")
+        return str(network)
+
+
+class LimitSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requests_per_minute: int = Field(default=120, ge=1, le=600)
+    max_depth: int = Field(default=6, ge=1, le=16)
+    max_nodes: int = Field(default=200, ge=1, le=2000)
+    max_strings: int = Field(default=80, ge=1, le=500)
+    max_list_items: int = Field(default=20, ge=1, le=MAX_PAGE_ITEMS)
+    max_presidio_calls: int = Field(default=400, ge=1, le=2000)
+
+
 class AllowlistFile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -222,6 +319,8 @@ class AllowlistFile(BaseModel):
     egress: EgressSpec
     deployment: DeploymentSpec
     verifier: VerifierSpec = Field(default_factory=VerifierSpec)
+    listeners: ListenerSpec
+    limits: LimitSpec = Field(default_factory=LimitSpec)
     recognizers_file: str
     max_payload_bytes: int = Field(default=262144, gt=0, le=1_000_000)
 
@@ -251,16 +350,30 @@ class AllowlistFile(BaseModel):
         if "grok-bot" not in self.callers or "claude-local" not in self.callers or "open-webui" not in self.callers:
             raise ValueError("required_caller_missing")
         grok = self.callers["grok-bot"]
-        if grok.phi_capable or grok.allowed_ingress != ["cloudflare"]:
+        if grok.phi_capable or grok.baa or grok.allowed_ingress != ["cloudflare"]:
             raise ValueError("grok_bot_must_be_cloudflare_non_phi")
         if not grok.cf_access_client_id_secret or not grok.cf_access_client_secret_secret:
             raise ValueError("grok_bot_cf_service_token_required")
-        for name in ("claude-local", "open-webui"):
-            caller = self.callers[name]
-            if not caller.phi_capable or caller.allowed_ingress != ["vpn"]:
-                raise ValueError("phi_caller_must_be_vpn_only")
-            if caller.cf_access_client_id_secret or caller.cf_access_client_secret_secret:
-                raise ValueError("vpn_caller_must_not_bind_cf_token")
+        if set(grok.allowed_tools) != _GROK_TOOLS:
+            raise ValueError("grok_bot_tools_must_be_structured")
+        if not _GROK_DENIED_FIELDS <= set(grok.denied_result_fields):
+            raise ValueError("grok_bot_free_text_fields_required")
+        for caller in self.callers.values():
+            if "cloudflare" in caller.allowed_ingress and caller.phi_capable:
+                raise ValueError("cloudflare_ingress_cannot_be_phi_capable")
+        claude = self.callers["claude-local"]
+        if not claude.phi_capable or not claude.baa or claude.allowed_ingress != ["vpn"]:
+            raise ValueError("phi_caller_must_be_vpn_only")
+        if claude.cf_access_client_id_secret or claude.cf_access_client_secret_secret:
+            raise ValueError("vpn_caller_must_not_bind_cf_token")
+        if claude.allowed_tools or claude.denied_result_fields:
+            raise ValueError("phi_caller_uses_the_shared_allowlist")
+        webui = self.callers["open-webui"]
+        # local-ai-stack has not cleared Open WebUI for PHI. Keep it non-BAA.
+        if webui.phi_capable or webui.baa or webui.allowed_ingress != ["vpn"]:
+            raise ValueError("open_webui_not_cleared_for_phi")
+        if webui.cf_access_client_id_secret or webui.cf_access_client_secret_secret:
+            raise ValueError("vpn_caller_must_not_bind_cf_token")
         if set(self.egress.upstream_hosts) != {"stackjack.invalid", "composio.invalid"}:
             raise ValueError("egress_upstreams_must_be_phase1_pins")
         if self.verifier.enabled and (self.deployment.target != "azure" or not self.deployment.baa):
@@ -283,6 +396,14 @@ class Settings(BaseModel):
     tls_cert_file: str | None
     tls_key_file: str | None
     presidio_ca_file: str | None
+    access_issuer: str = ""
+    access_audience: str = ""
+    access_jwks: dict[str, Any] = Field(default_factory=dict)
+    audit_forward: str | None = None
+    auth_mode: str = "bearer"
+    entra_audience: str = ""
+    entra_clients: tuple[Any, ...] = ()
+    baa_client_ids: frozenset[str] = frozenset()
 
 
 def assert_verifier_permitted(source: Settings | AllowlistFile) -> None:
@@ -294,6 +415,44 @@ def assert_verifier_permitted(source: Settings | AllowlistFile) -> None:
         raise ConfigError("verifier_refused_non_baa_target")
 
 
+def _apply_presidio_url_overrides(parsed: AllowlistFile) -> AllowlistFile:
+    analyzer = os.environ.get("PRM_ANALYZER_URL", "").strip()
+    anonymizer = os.environ.get("PRM_ANONYMIZER_URL", "").strip()
+    if not analyzer and not anonymizer:
+        return parsed
+    if not analyzer or not anonymizer:
+        raise ConfigError("presidio_url_pair_required")
+    presidio = parsed.presidio.model_copy(update={"analyzer_url": analyzer, "anonymizer_url": anonymizer})
+    return parsed.model_copy(update={"presidio": presidio})
+
+
+def _entra_clients(parsed: AllowlistFile) -> tuple[str, tuple[Any, ...]]:
+    from presidio_redaction_mcp.entra import PINNED_TENANT_ID, EntraClient
+
+    tenant = os.environ.get("PRM_ENTRA_TENANT_ID", PINNED_TENANT_ID).strip().lower()
+    if tenant != PINNED_TENANT_ID:
+        raise ConfigError("entra_tenant_unpinned")
+    audience = os.environ.get("PRM_ENTRA_AUDIENCE", "").strip()
+    lowered = audience.lower()
+    if not audience or "common" in lowered or "organizations" in lowered:
+        raise ConfigError("entra_audience_invalid")
+    specs = (
+        ("claude-local", "PRM_ENTRA_CLIENT_CLAUDE", True),
+        ("open-webui", "PRM_ENTRA_CLIENT_OPEN_WEBUI", True),
+        ("grok-bot", "PRM_ENTRA_CLIENT_GROK", False),
+    )
+    clients = []
+    for name, key, human in specs:
+        app_id = os.environ.get(key, "").strip().lower()
+        if _GUID.fullmatch(app_id) is None:
+            raise ConfigError("entra_client_missing")
+        caller = parsed.callers[name]
+        clients.append(EntraClient(name=name, app_id=app_id, phi_capable=caller.phi_capable, human=human))
+    if len({client.app_id for client in clients}) != len(clients):
+        raise ConfigError("entra_client_duplicate")
+    return audience, tuple(clients)
+
+
 def load_settings(config_path: Path, *, env: str | None = None) -> Settings:
     env_name = env or os.environ.get("PRM_ENV", "production")
     raw_bytes = config_path.read_bytes()
@@ -302,31 +461,59 @@ def load_settings(config_path: Path, *, env: str | None = None) -> Settings:
     except Exception as exc:
         if "verifier_refused_non_baa_target" in str(exc):
             raise ConfigError("verifier_refused_non_baa_target") from exc
+        if "cloudflare_ingress_cannot_be_phi_capable" in str(exc):
+            raise ConfigError("cloudflare_ingress_cannot_be_phi_capable") from exc
         raise ConfigError("allowlist_rejected") from exc
     assert_verifier_permitted(parsed)
     recognizer_path = config_path.parent / parsed.recognizers_file
     if not recognizer_path.is_file():
         recognizer_path = config_path.parent.parent / parsed.recognizers_file
     recognizers = load_recognizers(recognizer_path)
-    secrets = {name: _read_secret(name) for name in _secret_names(parsed)}
+    secrets = {name: _read_secret(name, env_name=env_name) for name in _secret_names(parsed)}
+    _reject_duplicate_secrets(secrets)
     hmac_key = secrets["audit_hmac_key"].encode("utf-8")
-    if len(hmac_key) < 32:
-        raise ConfigError("hmac_key_too_short")
     callers = tuple(_caller_secret(name, spec, secrets) for name, spec in parsed.callers.items())
+    _reject_duplicate_caller_tokens(callers)
+    issuer = os.environ.get("PRM_ACCESS_ISSUER", parsed.listeners.access_issuer).strip()
+    audience = os.environ.get("PRM_ACCESS_AUDIENCE", parsed.listeners.access_audience).strip()
+    auth_mode = os.environ.get("PRM_AUTH_MODE", "bearer").strip() or "bearer"
+    if auth_mode not in {"bearer", "entra"}:
+        raise ConfigError("auth_mode_invalid")
+    azure_internal = os.environ.get("PRM_AZURE_INTERNAL") == "1"
+    parsed = _apply_presidio_url_overrides(parsed)
+    if auth_mode == "entra":
+        entra_audience, entra_clients = _entra_clients(parsed)
+        jwks: dict[str, Any] = {}
+    else:
+        entra_audience, entra_clients = "", ()
+        jwks = _load_access_jwks(env_name)
+    baa_client_ids = frozenset(
+        client.app_id.lower() for client in entra_clients if parsed.callers[client.name].baa
+    )
     if env_name == "production":
         for url in (parsed.presidio.analyzer_url, parsed.presidio.anonymizer_url):
+            if azure_internal and url.startswith("http://127.0.0.1"):
+                continue
             if not url.startswith("https://"):
                 raise ConfigError("presidio_must_be_https")
-        tls_cert = os.environ.get("PRM_TLS_CERT_FILE", "/run/secrets/tls_cert")
-        tls_key = os.environ.get("PRM_TLS_KEY_FILE", "/run/secrets/tls_key")
-        ca_file = os.environ.get("PRM_PRESIDIO_CA_FILE", "/run/secrets/internal_ca")
-        for path in (tls_cert, tls_key, ca_file):
-            if not Path(path).is_file():
-                raise ConfigError("tls_material_missing")
+        if set(parsed.egress.presidio_hosts) != {"127.0.0.1"}:
+            raise ConfigError("presidio_must_be_loopback")
+        tls_cert, tls_key, ca_file = _tls_paths()
+        if auth_mode == "entra":
+            if not entra_audience or not entra_clients:
+                raise ConfigError("entra_not_configured")
+        else:
+            if _PLACEHOLDER.search(issuer) or _PLACEHOLDER.search(audience) or not jwks:
+                raise ConfigError("access_not_configured")
+        if not azure_internal:
+            for path in (tls_cert, tls_key, ca_file):
+                if not path or not Path(path).is_file():
+                    raise ConfigError("tls_material_missing")
     else:
-        tls_cert = os.environ.get("PRM_TLS_CERT_FILE")
-        tls_key = os.environ.get("PRM_TLS_KEY_FILE")
-        ca_file = os.environ.get("PRM_PRESIDIO_CA_FILE")
+        tls_cert, tls_key, ca_file = _tls_paths()
+    forward = os.environ.get("PRM_AUDIT_FORWARD", "").strip() or None
+    if forward is not None and forward != "syslog" and not forward.startswith("file:"):
+        raise ConfigError("audit_forward_invalid")
     egress = EgressPolicy(
         upstream_hosts=frozenset(parsed.egress.upstream_hosts),
         presidio_hosts=frozenset(parsed.egress.presidio_hosts),
@@ -350,6 +537,14 @@ def load_settings(config_path: Path, *, env: str | None = None) -> Settings:
         tls_cert_file=tls_cert,
         tls_key_file=tls_key,
         presidio_ca_file=ca_file,
+        access_issuer=issuer,
+        access_audience=audience,
+        access_jwks=jwks,
+        audit_forward=forward,
+        auth_mode=auth_mode,
+        entra_audience=entra_audience,
+        entra_clients=entra_clients,
+        baa_client_ids=baa_client_ids,
     )
 
 
@@ -383,16 +578,111 @@ def _secret_names(parsed: AllowlistFile) -> set[str]:
     return names
 
 
-def _read_secret(name: str) -> str:
-    file_override = os.environ.get(f"PRM_SECRET_FILE_{name.upper()}")
-    path = Path(file_override or f"/run/secrets/{name}")
-    if path.is_file():
-        value = path.read_text(encoding="utf-8").strip()
+def _secret_candidates(name: str) -> list[Path]:
+    paths: list[Path] = []
+    override = os.environ.get(f"PRM_SECRET_FILE_{name.upper()}")
+    if override:
+        paths.append(Path(override))
+    credentials = os.environ.get("CREDENTIALS_DIRECTORY")
+    if credentials:
+        paths.append(Path(credentials) / name)
+    paths.append(Path("/etc/presidio-redaction-mcp/secrets") / name)
+    paths.append(Path("/run/secrets") / name)
+    return paths
+
+
+def _read_secret(name: str, *, env_name: str) -> str:
+    value = ""
+    for path in _secret_candidates(name):
+        if path.is_file():
+            value = path.read_text(encoding="utf-8").strip()
+            break
     else:
-        value = os.environ.get(f"PRM_SECRET_{name.upper()}", "")
+        env_value = os.environ.get(f"PRM_SECRET_{name.upper()}", "")
+        if env_name == "production":
+            if env_value:
+                raise ConfigError("secret_env_fallback_denied")
+            raise ConfigError("secret_missing")
+        value = env_value
     if not value:
         raise ConfigError("secret_missing")
+    if name == "audit_hmac_key" and len(value.encode("utf-8")) < 32:
+        raise ConfigError("hmac_key_too_short")
+    _assert_secret_quality(value)
     return value
+
+
+def _assert_secret_quality(value: str) -> None:
+    if _PLACEHOLDER.search(value):
+        raise ConfigError("secret_placeholder")
+    raw = value.encode("utf-8")
+    if len(raw) < 32:
+        raise ConfigError("secret_too_short")
+    if len(set(value)) < 8 or _shannon_bits(value) < 3.0:
+        raise ConfigError("secret_low_entropy")
+
+
+def _shannon_bits(value: str) -> float:
+    counts = Counter(value)
+    total = len(value)
+    return -sum((count / total) * math.log2(count / total) for count in counts.values())
+
+
+def _reject_duplicate_secrets(secrets: dict[str, str]) -> None:
+    seen: dict[str, str] = {}
+    for name, value in secrets.items():
+        if value in seen:
+            raise ConfigError("duplicate_secret_value")
+        seen[value] = name
+
+
+def _reject_duplicate_caller_tokens(callers: tuple[CallerSecret, ...]) -> None:
+    seen: dict[bytes, str] = {}
+    for caller in callers:
+        previous = seen.get(caller.token_sha256)
+        if previous is not None:
+            raise ConfigError("duplicate_caller_token")
+        seen[caller.token_sha256] = caller.name
+
+
+def _tls_paths() -> tuple[str | None, str | None, str | None]:
+    credentials = os.environ.get("CREDENTIALS_DIRECTORY")
+    cert = os.environ.get("PRM_TLS_CERT_FILE")
+    key = os.environ.get("PRM_TLS_KEY_FILE")
+    ca_file = os.environ.get("PRM_PRESIDIO_CA_FILE")
+    if credentials:
+        cred = Path(credentials)
+        cert = cert or str(cred / "tls_cert")
+        key = key or str(cred / "tls_key")
+        ca_file = ca_file or str(cred / "internal_ca")
+    return cert, key, ca_file
+
+
+def _load_access_jwks(env_name: str) -> dict[str, Any]:
+    override = os.environ.get("PRM_ACCESS_JWKS_FILE")
+    credentials = os.environ.get("CREDENTIALS_DIRECTORY")
+    candidates: list[Path] = []
+    if override:
+        candidates.append(Path(override))
+    if credentials:
+        candidates.append(Path(credentials) / "access_jwks")
+    candidates.append(Path("/etc/presidio-redaction-mcp/access-jwks.json"))
+    for path in candidates:
+        if path.is_file():
+            try:
+                loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                raise ConfigError("access_jwks_invalid") from exc
+            if isinstance(loaded, str):
+                import json
+
+                loaded = json.loads(loaded)
+            if not isinstance(loaded, dict) or not isinstance(loaded.get("keys"), list) or not loaded["keys"]:
+                raise ConfigError("access_jwks_invalid")
+            return loaded
+    if env_name == "production":
+        raise ConfigError("access_not_configured")
+    return {}
 
 
 def _caller_secret(name: str, spec: CallerSpec, secrets: dict[str, str]) -> CallerSecret:
@@ -409,5 +699,7 @@ def _caller_secret(name: str, spec: CallerSpec, secrets: dict[str, str]) -> Call
 
 
 def _reject_identifier(value: str, *, field: str) -> None:
-    if not _NAME.match(value) or _WILDCARD.search(value) or _LIST_ALL.search(value) or _VERB.search(value):
+    if not _NAME.match(value) or _WILDCARD.search(value) or _LIST_ALL.search(value):
         raise ValueError(f"{field}_rejected")
+    if field == "tool" and (_READ_VERB.search(value) is None or _WRITE_TOKEN.search(value)):
+        raise ValueError("tool_read_verb_required")

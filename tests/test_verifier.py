@@ -132,7 +132,7 @@ def verified(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     anthropic = AnthropicDouble()
     from presidio_redaction_mcp.audit import AuditLog
 
-    audit = AuditLog(tmp_path / "audit.jsonl", tmp_path / "config-sha")
+    audit = AuditLog(tmp_path / "audit.jsonl", tmp_path / "config-sha", b"0123456789abcdef0123456789abcdef")
     runtime = build_runtime(
         settings,
         audit,
@@ -212,7 +212,7 @@ def test_runtime_guard_rejects_a_copied_non_baa_enable(tmp_path, monkeypatch):
     settings = settings.model_copy(update={"allowlist": allowlist})
     from presidio_redaction_mcp.audit import AuditLog
 
-    audit = AuditLog(tmp_path / "audit.jsonl", tmp_path / "config-sha")
+    audit = AuditLog(tmp_path / "audit.jsonl", tmp_path / "config-sha", b"0123456789abcdef0123456789abcdef")
     with pytest.raises(ConfigError) as caught:
         build_runtime(settings, audit, anthropic_api_key=API_KEY)
     assert caught.value.reason_code == "verifier_refused_non_baa_target"

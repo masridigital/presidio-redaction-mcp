@@ -1,0 +1,12 @@
+# WireGuard for PHI-capable callers (claude-local, open-webui).
+# Address 10.8.0.1/24 is the host. Peers use 10.8.0.2/32 and upward.
+# Replace REPLACE_AT_INSTALL before `systemctl enable --now presidio-wg0.service`.
+# Do not install this template as a live wg0.conf.
+[Interface]
+PrivateKey = REPLACE_AT_INSTALL
+Address = 10.8.0.1/24
+ListenPort = 51820
+
+[Peer]
+PublicKey = REPLACE_AT_INSTALL
+AllowedIPs = 10.8.0.2/32

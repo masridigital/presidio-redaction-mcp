@@ -47,7 +47,7 @@ Test fixtures are a separate rule: synthetic only, Faker seed 4242, header `SYNT
 
 Tool arguments from Grok Bot cross Cloudflare before Presidio. Callers do not put PHI in tool arguments. Blocking the call does not undo that hop. PHI-capable callers stay on the VPN listener. A valid token on the wrong listener is 401 and makes no upstream call.
 
-Upstream requests do not leave through cloudflared. The tunnel is ingress for the Grok Bot profile. Egress allows only the pins in the allowlist. Phase 1 upstreams are mocks (`mode: mock`) and do not dial a routable host.
+Upstream requests use the allowlist pins directly. Phase 1 upstreams are mocks (`mode: mock`) and do not dial a routable host. grok-bot is limited to structured tools, and free-text, date, and IP result fields are dropped before redaction. A remaining entity hit is blocked.
 
 ## Enforcement
 

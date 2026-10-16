@@ -1,4 +1,7 @@
-"""Per-caller bearer tokens bound to an ingress. Comparisons are constant-time."""
+"""Lab bearer tokens, and Entra JWTs on the private Azure ingress.
+
+Cloudflare Access JWTs are not accepted. API Management headers are not identity.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +9,7 @@ import hashlib
 import hmac
 from dataclasses import dataclass
 
+from presidio_redaction_mcp.entra import EntraTokenVerifier
 from presidio_redaction_mcp.errors import AuthError
 
 
@@ -14,6 +18,8 @@ class CallerIdentity:
     name: str
     phi_capable: bool
     ingress: str
+    authn: str = "bearer"
+    client_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -34,21 +40,36 @@ def _equals(presented: str, expected: bytes) -> bool:
     return hmac.compare_digest(digest(presented), expected)
 
 
+def _bearer(authorization: str | None) -> str:
+    if authorization and authorization.lower().startswith("bearer "):
+        return authorization[7:].strip()
+    return ""
+
+
 def authenticate(
     callers: tuple[CallerSecret, ...],
     *,
     ingress: str,
     authorization: str | None,
-    cf_client_id: str | None,
-    cf_client_secret: str | None,
+    cf_client_id: str | None = None,
+    cf_client_secret: str | None = None,
+    entra: EntraTokenVerifier | None = None,
 ) -> CallerIdentity:
-    presented = ""
-    if authorization and authorization.lower().startswith("bearer "):
-        presented = authorization[7:]
+    if ingress == "private":
+        if entra is None:
+            raise AuthError("entra_required")
+        principal = entra.verify(_bearer(authorization))
+        return CallerIdentity(
+            name=principal.name,
+            phi_capable=principal.phi_capable,
+            ingress="private",
+            authn="entra",
+            client_id=principal.app_id,
+        )
+    presented = _bearer(authorization)
     matched: CallerSecret | None = None
-    # Always walk every caller so a miss does not reveal which token matched.
     for caller in callers:
-        if _equals(presented, caller.token_sha256) and presented != "":
+        if presented and _equals(presented, caller.token_sha256):
             matched = caller
     if matched is None:
         raise AuthError("invalid_token")
@@ -63,4 +84,11 @@ def authenticate(
         secret_ok = _equals(cf_client_secret, matched.cf_client_secret_sha256)
         if not (id_ok and secret_ok):
             raise AuthError("cf_service_token_required")
-    return CallerIdentity(name=matched.name, phi_capable=matched.phi_capable, ingress=ingress)
+    elif ingress != "vpn":
+        raise AuthError("ingress_not_allowed")
+    return CallerIdentity(
+        name=matched.name,
+        phi_capable=matched.phi_capable,
+        ingress=ingress,
+        authn="bearer",
+    )

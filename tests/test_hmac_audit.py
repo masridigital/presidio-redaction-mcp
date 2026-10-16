@@ -20,21 +20,15 @@ def _hmac(arguments: dict) -> str:
     return hmac.new(KEY, canonical, hashlib.sha256).hexdigest()
 
 
-def _allow_row(stack) -> dict:
-    rows = [
-        row
-        for row in stack["runtime"].audit.rows()
-        if row["event"] == "tool_call" and row["decision"] == "allow"
-    ]
-    assert rows
-    return rows[-1]
-
-
 def test_audit_hmac_matches_the_keyed_canonical_json(stack):
     arguments = {"query": "MRN-SYN-0001234", "limit": 2}
     response = mcp_call(stack["vpn"], SECRETS["claude_local_token"], "stackjack_search_docs", arguments)
     assert response.status_code == 200
-    row = _allow_row(stack)
+    rows = [row for row in stack["runtime"].audit.rows() if row["event"] == "tool_call"]
+    assert rows
+    row = rows[-1]
+    assert row["decision"] == "allow"
+    assert row["reason_code"] == "ok"
     assert row["args_hmac"] == _hmac(arguments)
     assert row["args_hmac"] == _hmac({"limit": 2, "query": "MRN-SYN-0001234"})
     unsalted = hashlib.sha256(

@@ -294,9 +294,69 @@ def test_analyze_http_returns_us_npi(engines):
         assert any(
             item["entity_type"] == "US_NPI" and text[item["start"] : item["end"]] == candidate for item in body
         )
+        locked = httpx.post(
+            f"{base}/analyze",
+            json={
+                "text": text,
+                "language": "en",
+                "entities": ["PERSON"],
+                "score_threshold": 0.99,
+                "ad_hoc_recognizers": [
+                    {
+                        "name": "evil",
+                        "supported_language": "en",
+                        "supported_entity": "MRN",
+                        "patterns": [{"name": "all", "regex": "provider", "score": 0.99}],
+                    }
+                ],
+            },
+            timeout=60,
+        )
+        assert locked.status_code == 200
+        locked_body = locked.json()
+        assert any(item["entity_type"] == "US_NPI" for item in locked_body)
+        assert not any(item["entity_type"] == "MRN" for item in locked_body)
     finally:
         server.shutdown()
         server.server_close()
+
+
+@pytest.mark.native
+def test_analyze_http_hides_internal_errors(engines, monkeypatch):
+    import io
+    from contextlib import redirect_stderr
+
+    serve = _serve_module()
+    engine, _anonymizer = engines
+
+    def boom(_engine, _payload):
+        raise RuntimeError("MRN-SYN-0001234")
+
+    monkeypatch.setattr(serve, "_analyze", boom)
+    server = serve.serve_in_thread(serve.build_analyzer(nlp_engine=engine.nlp_engine))
+    try:
+        host, port = server.server_address
+        response = httpx.post(
+            f"http://{host}:{port}/analyze",
+            json={"text": "provider", "language": "en"},
+            timeout=30,
+        )
+        assert response.status_code == 500
+        assert response.json() == {"error": "internal"}
+        assert "MRN-SYN-0001234" not in response.text
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    handler_cls = serve._handler(object())
+    handler = handler_cls.__new__(handler_cls)
+    buffer = io.StringIO()
+    with redirect_stderr(buffer):
+        try:
+            raise RuntimeError("MRN-SYN-0001234")
+        except RuntimeError:
+            handler.handle_error()
+    assert buffer.getvalue().strip() == "RuntimeError"
 
 
 @pytest.mark.native
@@ -399,8 +459,7 @@ def test_proxy_round_trip_uses_the_real_engines(engines, tmp_path, monkeypatch):
             text = tool_text(outbound)
             assert SECRET not in text
             assert "Testy McFakerson" not in text
-            assert "<MRN>" in text
-            assert "<PERSON>" in text
+            assert "phi_in_non_baa_tool_result" in text
     finally:
         import asyncio
 

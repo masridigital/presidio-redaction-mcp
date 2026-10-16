@@ -157,7 +157,7 @@ def test_empty_tool_lists_load_and_deny_every_call(tmp_path, monkeypatch):
     raw["upstreams"]["stackjack"]["tools"] = []
     raw["upstreams"]["composio"]["tools"] = []
     settings = _load(tmp_path, monkeypatch, raw)
-    audit = AuditLog(tmp_path / "audit.jsonl", tmp_path / "config-sha")
+    audit = AuditLog(tmp_path / "audit.jsonl", tmp_path / "config-sha", settings.audit_hmac_key)
     runtime = build_runtime(settings, audit)
     with TestClient(runtime.vpn_app, base_url="http://testserver") as client:
         response = mcp_call(client, SECRETS["claude_local_token"], "stackjack_health_check", {"limit": 1})

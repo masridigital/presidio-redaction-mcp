@@ -1,0 +1,6 @@
+---
+- name: Native presidio-redaction-mcp host
+  hosts: presidio
+  become: true
+  roles:
+    - presidio_native

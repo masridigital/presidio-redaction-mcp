@@ -38,17 +38,36 @@ _SENSITIVE_FIELDS = frozenset(
 
 
 class Redactor:
-    def __init__(self, client: PresidioClient, recognizers: RecognizerSet, max_payload_bytes: int) -> None:
+    def __init__(
+        self,
+        client: PresidioClient,
+        recognizers: RecognizerSet,
+        max_payload_bytes: int,
+        *,
+        max_depth: int = 6,
+        max_nodes: int = 200,
+        max_strings: int = 80,
+        max_list_items: int = 20,
+        max_presidio_calls: int = 400,
+    ) -> None:
         self.client = client
         self.recognizers = recognizers
         self.max_payload_bytes = max_payload_bytes
+        self.max_depth = max_depth
+        self.max_nodes = max_nodes
+        self.max_strings = max_strings
+        self.max_list_items = max_list_items
+        self.max_presidio_calls = max_presidio_calls
+        self._presidio_calls = 0
 
     async def redact(self, value: Any) -> tuple[Any, dict[str, int]]:
         encoded = json.dumps(value, sort_keys=True, default=str).encode("utf-8")
         if len(encoded) > self.max_payload_bytes:
             raise FailClosed("payload_too_large")
+        self._measure(value, depth=0, nodes=[0], strings=[0])
+        self._presidio_calls = 0
         # One full-document call first, so an outage cannot be skipped on an empty walk.
-        _, probe_counts = await self.client.anonymize_text(encoded.decode("utf-8"))
+        _, probe_counts = await self._anonymize(encoded.decode("utf-8"))
         rewritten, walk_counts = await self._walk(value)
         counts = _merge(probe_counts, walk_counts)
         rendered = json.dumps(rewritten, sort_keys=True, default=str)
@@ -65,7 +84,7 @@ class Redactor:
                     raise FailClosed("unanalyzable_content")
                 if key.lower() in _UNANALYZABLE:
                     raise FailClosed("unanalyzable_content")
-                _, key_counts = await self.client.anonymize_text(key)
+                _, key_counts = await self._anonymize(key)
                 if key_counts or self.recognizers.find_spans(key):
                     raise FailClosed("pii_in_key")
                 if key.lower() in _SENSITIVE_FIELDS:
@@ -77,6 +96,8 @@ class Redactor:
                 counts = _merge(counts, item_counts)
             return output, counts
         if isinstance(value, list):
+            if len(value) > self.max_list_items:
+                raise FailClosed("list_too_long")
             counts = {}
             output_list = []
             for item in value:
@@ -87,7 +108,7 @@ class Redactor:
         if isinstance(value, str):
             if _looks_encoded_value(value, self.recognizers):
                 raise FailClosed("unanalyzable_content")
-            anonymized, counts = await self.client.anonymize_text(value)
+            anonymized, counts = await self._anonymize(value)
             if self.recognizers.find_spans(anonymized):
                 raise FailClosed("presidio_anonymizer_ineffective")
             return anonymized, counts
@@ -95,11 +116,38 @@ class Redactor:
             return value, {}
         if isinstance(value, (int, float)):
             rendered = str(value)
-            _, counts = await self.client.anonymize_text(rendered)
+            _, counts = await self._anonymize(rendered)
             if counts or self.recognizers.find_spans(rendered):
                 raise FailClosed("unmaskable_scalar")
             return value, {}
         raise FailClosed("unanalyzable_content")
+
+    async def _anonymize(self, text: str) -> tuple[str, dict[str, int]]:
+        self._presidio_calls += 1
+        if self._presidio_calls > self.max_presidio_calls:
+            raise FailClosed("presidio_fanout_exceeded")
+        return await self.client.anonymize_text(text)
+
+    def _measure(self, value: Any, *, depth: int, nodes: list[int], strings: list[int]) -> None:
+        if depth > self.max_depth:
+            raise FailClosed("nesting_too_deep")
+        nodes[0] += 1
+        if nodes[0] > self.max_nodes:
+            raise FailClosed("payload_too_complex")
+        if isinstance(value, dict):
+            for item in value.values():
+                self._measure(item, depth=depth + 1, nodes=nodes, strings=strings)
+            return
+        if isinstance(value, list):
+            if len(value) > self.max_list_items:
+                raise FailClosed("list_too_long")
+            for item in value:
+                self._measure(item, depth=depth + 1, nodes=nodes, strings=strings)
+            return
+        if isinstance(value, str):
+            strings[0] += 1
+            if strings[0] > self.max_strings:
+                raise FailClosed("payload_too_complex")
 
 
 def filter_fields(value: Any, allowed: set[str]) -> Any:
@@ -107,6 +155,19 @@ def filter_fields(value: Any, allowed: set[str]) -> Any:
         return {key: filter_fields(item, allowed) for key, item in value.items() if key in allowed}
     if isinstance(value, list):
         return [filter_fields(item, allowed) for item in value]
+    return value
+
+
+def drop_denied_fields(value: Any, denied: set[str]) -> Any:
+    """Remove caller-denied fields before Presidio sees them."""
+    if isinstance(value, dict):
+        return {
+            key: drop_denied_fields(item, denied)
+            for key, item in value.items()
+            if key not in denied
+        }
+    if isinstance(value, list):
+        return [drop_denied_fields(item, denied) for item in value]
     return value
 
 

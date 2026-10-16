@@ -1,5 +1,5 @@
 [Unit]
-Description=Presidio analyzer
+Description=Presidio analyzer (native, loopback TLS)
 After=network-online.target
 Wants=network-online.target
 
@@ -8,10 +8,13 @@ Type=simple
 User=presidio-analyzer
 Group=presidio-analyzer
 WorkingDirectory=/opt/presidio-analyzer
-Environment=PRESIDIO_BIND=127.0.0.1
-Environment=PRESIDIO_PORT=3000
-Environment=PRESIDIO_SPACY_MODEL=en_core_web_lg
 Environment=PYTHONPATH=/opt/presidio-analyzer
+Environment=PRESIDIO_BIND=127.0.0.1
+Environment=PRESIDIO_PORT=5001
+Environment=PRESIDIO_SPACY_MODEL=en_core_web_lg
+Environment=HOME=/var/lib/presidio-analyzer
+Environment=XDG_CACHE_HOME=/var/lib/presidio-analyzer/cache
+Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=/opt/presidio-analyzer/venv/bin/python -m presidio.serve
 Restart=on-failure
 RestartSec=5
@@ -23,13 +26,15 @@ PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+RestrictRealtime=yes
 LockPersonality=yes
 CapabilityBoundingSet=
 AmbientCapabilities=
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-ReadWritePaths=/var/lib/presidio-analyzer
 SystemCallArchitectures=native
+UMask=0077
+ReadWritePaths=/var/lib/presidio-analyzer
+ReadOnlyPaths=/etc/presidio-redaction-mcp/tls /opt/presidio-analyzer
 
 [Install]
 WantedBy=multi-user.target
