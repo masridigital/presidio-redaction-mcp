@@ -481,7 +481,7 @@ def test_production_egress_is_the_two_upstreams_and_local_presidio_only(tmp_path
     monkeypatch.setenv("PRM_TLS_KEY_FILE", str(key))
     monkeypatch.setenv("PRM_PRESIDIO_CA_FILE", str(ca))
     monkeypatch.setenv("PRM_ACCESS_ISSUER", "https://team.cloudflareaccess.com")
-    monkeypatch.setenv("PRM_ACCESS_AUDIENCE", "00112233445566778899aabbccddeeff")
+    monkeypatch.setenv("PRM_ACCESS_AUDIENCE", "prm-test-audience")
     jwks = tmp_path / "jwks.json"
     jwks.write_text('{"keys":[{"kty":"RSA","kid":"prod","n":"aa","e":"AQAB"}]}', encoding="utf-8")
     monkeypatch.setenv("PRM_ACCESS_JWKS_FILE", str(jwks))
