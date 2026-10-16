@@ -36,7 +36,11 @@ class PresidioDouble:
         if fault == "wrong_type":
             return httpx.Response(200, content=b"[]", headers={"content-type": "text/plain"})
         if path.endswith("/anonymize"):
-            rewritten = _apply(text, body.get("analyzer_results") or [])
+            # Same rule as Presidio 2.2.362 Replace: a provided new_value is
+            # literal; an omitted one becomes "<ENTITY>".
+            default = ((body.get("anonymizers") or {}).get("DEFAULT") or {})
+            new_value = default.get("new_value")
+            rewritten = _apply(text, body.get("analyzer_results") or [], new_value)
             return httpx.Response(200, json={"text": rewritten})
         threshold = float(body.get("score_threshold") or 0)
         spans = [span for span in _detect(text, body.get("ad_hoc_recognizers") or []) if span["score"] >= threshold]
@@ -104,8 +108,9 @@ def _detect(text: str, recognizers: list[dict[str, Any]]) -> list[dict[str, Any]
     return kept
 
 
-def _apply(text: str, spans: list[dict[str, Any]]) -> str:
+def _apply(text: str, spans: list[dict[str, Any]], new_value: str | None = None) -> str:
     ordered = sorted(spans, key=lambda item: item["start"], reverse=True)
     for span in ordered:
-        text = text[: span["start"]] + f"<{span['entity_type']}>" + text[span["end"] :]
+        token = new_value if new_value else f"<{span['entity_type']}>"
+        text = text[: span["start"]] + token + text[span["end"] :]
     return text

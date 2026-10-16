@@ -18,6 +18,38 @@ from presidio_redaction_mcp.redact import Redactor, count_items, filter_fields
 from presidio_redaction_mcp.upstream import MockUpstream
 
 _ARG_NAME = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+_INJECTION = re.compile(
+    r"(?i)(?:"
+    r"ignore\s+(?:all\s+)?(?:previous|prior|above)\s+instructions"
+    r"|disregard\s+(?:all\s+)?(?:previous|prior|above)(?:\s+instructions)?"
+    r"|you\s+are\s+now"
+    r"|system\s+prompt"
+    r"|do\s+not\s+tell\s+the\s+user"
+    r"|<\s*\|im_start\|\s*>"
+    r"|</?\s*system\s*>"
+    r")"
+)
+
+
+class RateLimiter:
+    """Fixed window per caller. The clock is injectable so tests do not sleep."""
+
+    def __init__(self, *, limit: int = 600, window_seconds: float = 60.0, clock=None) -> None:
+        if limit < 1:
+            raise ValueError("rate_limit")
+        self.limit = limit
+        self.window_seconds = window_seconds
+        self._clock = clock or time.monotonic
+        self._hits: dict[str, list[float]] = {}
+
+    def check(self, key: str) -> None:
+        now = self._clock()
+        window = [stamp for stamp in self._hits.get(key, []) if now - stamp < self.window_seconds]
+        if len(window) >= self.limit:
+            self._hits[key] = window
+            raise PolicyError("rate_limited")
+        window.append(now)
+        self._hits[key] = window
 
 
 class RedactionService:
@@ -28,11 +60,13 @@ class RedactionService:
         audit: AuditLog,
         redactor: Redactor,
         upstreams: dict[str, MockUpstream],
+        rate_limiter: RateLimiter | None = None,
     ) -> None:
         self.settings = settings
         self.audit = audit
         self.redactor = redactor
         self.upstreams = upstreams
+        self.rate_limiter = rate_limiter or RateLimiter()
         self._tools = tool_index(settings)
 
     async def call_tool(self, caller: CallerIdentity, name: str, arguments: dict[str, Any] | None) -> str:
@@ -40,6 +74,20 @@ class RedactionService:
         arguments = arguments or {}
         args_hmac = _args_hmac(self.settings.audit_hmac_key, arguments)
         located = self._tools.get(name)
+        try:
+            self.rate_limiter.check(caller.name)
+        except PolicyError as exc:
+            self._audit(
+                caller,
+                upstream=located[0] if located else None,
+                tool=name if located else None,
+                args_hmac=args_hmac,
+                counts={},
+                decision="deny",
+                reason=exc.reason_code,
+                started=started,
+            )
+            return _error(exc.reason_code)
         if located is None:
             # Do not write the caller-supplied name. It is untrusted and may itself be an identifier.
             self._audit(
@@ -104,6 +152,7 @@ class RedactionService:
             return _error("phi_in_cloudflare_tool_args")
 
         upstream = self.upstreams[upstream_name]
+        redacted_args = scrub_secrets(redacted_args, self.settings.secret_values)
         try:
             self.settings.egress.check(upstream.base_url, purpose="upstream")
             raw_result = await upstream.call(tool, redacted_args)
@@ -162,6 +211,10 @@ class RedactionService:
             return _error(exc.reason_code)
 
         counts = _merge(arg_counts, result_counts)
+        redacted_result = scrub_secrets(
+            strip_instructions(redacted_result),
+            self.settings.secret_values,
+        )
         self._audit(
             caller,
             upstream=upstream_name,
@@ -172,7 +225,8 @@ class RedactionService:
             reason="ok",
             started=started,
         )
-        return json.dumps(redacted_result, sort_keys=True, separators=(",", ":"))
+        rendered = json.dumps(redacted_result, sort_keys=True, separators=(",", ":"))
+        return scrub_secrets(rendered, self.settings.secret_values)
 
     def _validate_arguments(self, tool: ToolSpec, arguments: dict[str, Any]) -> None:
         if not isinstance(arguments, dict):
@@ -236,6 +290,30 @@ def _error(reason_code: str) -> str:
 
 def _sensitive(counts: dict[str, int]) -> bool:
     return any(count > 0 for count in counts.values())
+
+
+def strip_instructions(value: Any) -> Any:
+    """Remove instruction-override text from a result. Tool definitions stay pinned."""
+    if isinstance(value, str):
+        return _INJECTION.sub("<STRIPPED>", value)
+    if isinstance(value, dict):
+        return {key: strip_instructions(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [strip_instructions(item) for item in value]
+    return value
+
+
+def scrub_secrets(value: Any, secrets: tuple[str, ...]) -> Any:
+    if isinstance(value, str):
+        for secret in secrets:
+            if secret and secret in value:
+                value = value.replace(secret, "<REDACTED>")
+        return value
+    if isinstance(value, dict):
+        return {key: scrub_secrets(item, secrets) for key, item in value.items()}
+    if isinstance(value, list):
+        return [scrub_secrets(item, secrets) for item in value]
+    return value
 
 
 def _merge(left: dict[str, int], right: dict[str, int]) -> dict[str, int]:

@@ -36,6 +36,9 @@ where = ["src"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+  "native: real Presidio 2.2.362 and the pinned en_core_web_lg model",
+]
 filterwarnings = [
   "error",
   "ignore:Using `httpx` with `starlette.testclient`:DeprecationWarning",

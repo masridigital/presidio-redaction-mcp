@@ -12,7 +12,7 @@ from presidio_redaction_mcp.audit import AuditLog
 from presidio_redaction_mcp.config import Settings
 from presidio_redaction_mcp.presidio_client import PresidioClient
 from presidio_redaction_mcp.redact import Redactor
-from presidio_redaction_mcp.service import RedactionService
+from presidio_redaction_mcp.service import RateLimiter, RedactionService
 from presidio_redaction_mcp.upstream import MockUpstream
 
 
@@ -34,6 +34,7 @@ def build_runtime(
     transport: httpx.AsyncBaseTransport | None = None,
     upstreams: dict[str, MockUpstream] | None = None,
     allowed_hosts: list[str] | None = None,
+    rate_limiter: RateLimiter | None = None,
 ) -> Runtime:
     presidio = PresidioClient(
         analyzer_url=settings.allowlist.presidio.analyzer_url,
@@ -56,6 +57,7 @@ def build_runtime(
         audit=audit,
         redactor=Redactor(presidio, settings.recognizers, settings.allowlist.max_payload_bytes),
         upstreams=upstreams,
+        rate_limiter=rate_limiter,
     )
     hosts = allowed_hosts or [
         "127.0.0.1",

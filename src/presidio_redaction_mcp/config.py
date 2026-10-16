@@ -19,6 +19,21 @@ from presidio_redaction_mcp.recognizers import RecognizerSet, load_recognizers
 ALLOWED_UPSTREAMS = frozenset({"stackjack", "composio"})
 MAX_PAGE_ITEMS = 20
 _NAME = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+_SHA256 = re.compile(r"^[a-f0-9]{64}$")
+# Static descriptions only. Instruction-override text is a poisoned tool definition.
+_POISONED_DESCRIPTION = re.compile(
+    r"(?i)(?:"
+    r"ignore\s+(?:all\s+)?(?:previous|prior|above)\s+instructions"
+    r"|disregard\s+(?:all\s+)?(?:previous|prior|above)"
+    r"|you\s+are\s+now"
+    r"|system\s+prompt"
+    r"|jailbreak"
+    r"|exfiltrate"
+    r"|override\s+(?:the\s+|your\s+)?instructions"
+    r"|<\s*\|im_start\|\s*>"
+    r"|</?\s*system\s*>"
+    r")"
+)
 _WILDCARD = re.compile(r"[\*\?\[\]]|(?:^|[_\-])all(?:[_\-]|$)")
 _LIST_ALL = re.compile(r"list[_-]?all", re.IGNORECASE)
 _VERB = re.compile(
@@ -60,6 +75,7 @@ class ToolSpec(BaseModel):
 
     name: str
     description: str
+    description_sha256: str
     rationale: str
     read_only: Literal[True]
     phi_scope: Literal["none"]
@@ -77,6 +93,15 @@ class ToolSpec(BaseModel):
             return value
         _reject_identifier(value, field="tool")
         return value
+
+    @model_validator(mode="after")
+    def _pin_description(self) -> ToolSpec:
+        if _POISONED_DESCRIPTION.search(self.description):
+            raise ValueError("tool_description_poisoned")
+        digest = hashlib.sha256(self.description.encode("utf-8")).hexdigest()
+        if _SHA256.fullmatch(self.description_sha256) is None or digest != self.description_sha256:
+            raise ValueError("tool_description_hash_mismatch")
+        return self
 
     @field_validator("allowed_result_fields")
     @classmethod
@@ -196,6 +221,7 @@ class Settings(BaseModel):
     callers: tuple[CallerSecret, ...]
     egress: EgressPolicy
     audit_hmac_key: bytes
+    secret_values: tuple[str, ...] = ()
     tls_cert_file: str | None
     tls_key_file: str | None
     presidio_ca_file: str | None
@@ -250,6 +276,7 @@ def load_settings(config_path: Path, *, env: str | None = None) -> Settings:
         callers=callers,
         egress=egress,
         audit_hmac_key=hmac_key,
+        secret_values=tuple(value for value in secrets.values() if len(value) >= 8),
         tls_cert_file=tls_cert,
         tls_key_file=tls_key,
         presidio_ca_file=ca_file,

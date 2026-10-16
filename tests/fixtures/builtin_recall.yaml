@@ -1,0 +1,69 @@
+# SYNTHETIC — FAKE DATA — NOT REAL PERSONS
+header: SYNTHETIC
+banner: SYNTHETIC — FAKE DATA — NOT REAL PERSONS
+presidio: 2.2.362
+spacy_model: en_core_web_lg==3.8.0
+score_threshold: 0.4
+cases:
+- entity: US_SSN
+  value: 901-23-4567
+  text: SSN 901-23-4567
+- entity: US_SSN
+  value: 901.23.4567
+  text: SSN 901.23.4567
+- entity: EMAIL_ADDRESS
+  value: fake.user@example.com
+  text: email fake.user@example.com
+- entity: EMAIL_ADDRESS
+  value: pat.placeholder@example.org
+  text: email pat.placeholder@example.org
+- entity: PHONE_NUMBER
+  value: (555) 010-0199
+  text: phone (555) 010-0199
+- entity: PHONE_NUMBER
+  value: +1-202-555-0127
+  text: phone +1-202-555-0127
+- entity: PHONE_NUMBER
+  value: 202-555-0148
+  text: phone 202-555-0148
+- entity: CREDIT_CARD
+  value: 4111 1111 1111 1111
+  text: card 4111 1111 1111 1111
+- entity: CREDIT_CARD
+  value: 4111-1111-1111-1111
+  text: card 4111-1111-1111-1111
+- entity: DATE_TIME
+  value: '1900-01-01'
+  text: dob 1900-01-01
+- entity: DATE_TIME
+  value: '1901-02-02'
+  text: dob 1901-02-02
+- entity: PERSON
+  value: Jane Doe
+  text: person Jane Doe visited
+- entity: PERSON
+  value: Alex Example
+  text: person Alex Example visited
+- entity: LOCATION
+  value: Testville
+  text: loc 123 Fake Street, Testville, ZZ 00000
+- entity: IP_ADDRESS
+  value: 192.0.2.10
+  text: from 192.0.2.10 today
+gaps:
+- entity: PERSON
+  value: Testy McFakerson
+  text: person Testy McFakerson
+  backstop: deny_list
+- entity: MRN
+  value: 'MRN: 0001234'
+  text: 'MRN: 0001234'
+  backstop: ad_hoc
+- entity: RECORD_ID
+  value: REC-000042
+  text: REC-000042
+  backstop: ad_hoc
+- entity: NPI
+  value: 'NPI: 0000000000'
+  text: 'NPI: 0000000000'
+  backstop: ad_hoc

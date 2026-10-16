@@ -1,0 +1,27 @@
+# SYNTHETIC — FAKE DATA — NOT REAL PERSONS
+header: SYNTHETIC
+banner: SYNTHETIC — FAKE DATA — NOT REAL PERSONS
+inbound_vpn:
+  text: mask
+  base64: block
+  json_key: block
+inbound_cloudflare: block
+outbound:
+  text: mask
+  base64: block
+  json_key: block
+block_reasons:
+  base64: unanalyzable_content
+  json_key: pii_in_key
+placeholders:
+  PERSON: <PERSON>
+  EMAIL_ADDRESS: <EMAIL_ADDRESS>
+  MRN: <MRN>
+  RECORD_ID: <RECORD_ID>
+  ACCOUNT_ID: <ACCOUNT_ID>
+  NPI: <NPI>
+  US_SSN: <US_SSN>
+  PHONE_NUMBER: <PHONE_NUMBER>
+  DATE_OF_BIRTH: <DATE_OF_BIRTH>
+  CREDIT_CARD: <CREDIT_CARD>
+  LOCATION: <LOCATION>

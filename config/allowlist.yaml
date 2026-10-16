@@ -47,6 +47,7 @@ upstreams:
     tools:
       - name: stackjack_health_check
         description: StackJack process liveness. No customer records.
+        description_sha256: ea84d075e6f478c351452855a454ba3c82f3ecb1ad05988b1e162b4d3c9b3afe
         rationale: Liveness only. No tickets, transcripts, or client records.
         read_only: true
         phi_scope: none
@@ -57,6 +58,7 @@ upstreams:
             type: integer
       - name: stackjack_get_service_status
         description: StackJack service status fields only.
+        description_sha256: 0a1ea44037ad5d4971ac45628e295f4d0a2624c634a9d87959492ec78fead19c
         rationale: Status metadata. No support-ticket or tenant content.
         read_only: true
         phi_scope: none
@@ -67,6 +69,7 @@ upstreams:
             type: integer
       - name: stackjack_list_advisories
         description: Published StackJack security advisories, one page.
+        description_sha256: b5d7b13376360f2e85451a72e84360368419404f1cb72c0e868eeed168925dd0
         rationale: Product security advisories. Paginated. Not a client export.
         read_only: true
         phi_scope: none
@@ -81,6 +84,7 @@ upstreams:
             pattern: '^[A-Za-z0-9._:-]{0,128}$'
       - name: stackjack_get_release_notes
         description: Product changelog for one version id.
+        description_sha256: 1340316dd93079d426754edd8a48ad7611d18ee9ae30bcfe47d51063e6148d32
         rationale: Public product notes addressed by an opaque version id.
         read_only: true
         phi_scope: none
@@ -93,6 +97,7 @@ upstreams:
             pattern: '^[A-Za-z0-9._:-]{1,64}$'
       - name: stackjack_search_docs
         description: Search public StackJack documentation.
+        description_sha256: 2f5a7c4d937d670666a3e528f80ab75d15fbf243e49c5ad3e137c5f169c921a5
         rationale: Public docs search. Query text is still redacted before the mock upstream.
         read_only: true
         phi_scope: none
@@ -106,6 +111,7 @@ upstreams:
             type: integer
       - name: stackjack_get_doc_page
         description: Fetch one public documentation page by id.
+        description_sha256: 8fb77270f35fbbcaf6cc0baf60455d4558fdb88047fa3d7da4c5ac85ec40e9bb
         rationale: One public page. The id is an opaque slug, not a name or record id.
         read_only: true
         phi_scope: none
@@ -123,6 +129,7 @@ upstreams:
     tools:
       - name: UPTIMEROBOT_GET_MONITORS
         description: UptimeRobot monitor id, status, type, and interval.
+        description_sha256: 4f911816f15ae54115b11255c4f6375322cbb96ab9a8e18ee5a481592b945dec
         rationale: Availability metadata for one pinned connected account. Contact, URL, and friendly-name fields are not allowlisted. alert_contacts and search arguments are not in the schema.
         read_only: true
         phi_scope: none
@@ -140,6 +147,7 @@ upstreams:
             pattern: '^[A-Za-z0-9._:-]{0,128}$'
       - name: UPTIMEROBOT_GET_ACCOUNT_DETAILS
         description: UptimeRobot plan and capacity fields only.
+        description_sha256: 47725aea37ddb5d90d833ee30e71a175f4b34124c076f2081d88681f89b7dd0d
         rationale: Account metrics for the same pinned connected account. Email and contact fields are not allowlisted.
         read_only: true
         phi_scope: none
