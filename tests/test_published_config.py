@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import logging
+import sys
 from pathlib import Path
 
 import pytest
@@ -25,9 +27,7 @@ def _settings(monkeypatch: pytest.MonkeyPatch):
     return load_settings(ROOT / "config" / "allowlist.yaml", env="test")
 
 
-def test_published_reader_fails_closed_and_applies_thresholds(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_published_reader_fails_closed_and_applies_thresholds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     signer = RsaConfigSigner.generate(key_id="test-key")
     verifier = signer.public_verifier()
     with pytest.raises(ConfigError):
@@ -87,11 +87,18 @@ def test_published_reader_fails_closed_and_applies_thresholds(
 
     version = store.root / "versions" / "000002.json"
     version.write_bytes(version.read_bytes().replace(b"sha256", b"sha000", 1))
-    with caplog.at_level(logging.ERROR, logger="presidio_admin.alert"):
+    from presidio_admin.errors import alert_logger
+
+    handler = next(item for item in alert_logger().handlers if isinstance(item, logging.StreamHandler))
+    buffer = io.StringIO()
+    handler.stream = buffer
+    try:
         with pytest.raises(ConfigError) as caught:
             load_published_or_fail(store.root, verifier=verifier)
+    finally:
+        handler.stream = sys.stderr
     assert caught.value.reason_code == "store_signature_invalid"
-    assert "alert reason_code=store_signature_invalid" in caplog.text
+    assert buffer.getvalue() == "alert reason_code=store_signature_invalid\n"
 
 
 def test_production_and_entra_require_the_published_store(monkeypatch: pytest.MonkeyPatch) -> None:

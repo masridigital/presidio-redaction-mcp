@@ -3,15 +3,35 @@
 from __future__ import annotations
 
 import logging
+import sys
 
+_ALERT_LOGGER = "presidio_admin.alert"
 _SIGNATURE_ALERT = "alert reason_code=store_signature_invalid"
+_STDERR_HANDLER = "_prm_alert_stderr"
+
+
+def alert_logger() -> logging.Logger:
+    """Logger with its own stderr handler. Root logging cannot drop this line."""
+    logger = logging.getLogger(_ALERT_LOGGER)
+    logger.setLevel(logging.ERROR)
+    logger.propagate = False
+    if not any(getattr(handler, _STDERR_HANDLER, False) for handler in logger.handlers):
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setLevel(logging.ERROR)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        setattr(handler, _STDERR_HANDLER, True)
+        logger.addHandler(handler)
+    return logger
 
 
 def emit_store_signature_alert(reason_code: str) -> None:
     """One stderr line. The proxy workspace alerts on this text."""
     if reason_code != "store_signature_invalid":
         return
-    logging.getLogger("presidio_admin.alert").error(_SIGNATURE_ALERT)
+    alert_logger().error(_SIGNATURE_ALERT)
+
+
+alert_logger()
 
 
 class PortalError(Exception):

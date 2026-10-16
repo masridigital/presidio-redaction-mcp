@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import io
 import json
 import logging
+import sys
 
 import pytest
 
-from presidio_admin.errors import ApprovalError, ConfigRejected
+from presidio_admin.errors import ApprovalError, ConfigRejected, alert_logger
 from presidio_admin.floor import LocalVersionFloor
 from presidio_admin.proxy_loader import load_for_proxy
 from presidio_admin.schema import default_config, parse_config
@@ -13,18 +15,25 @@ from presidio_admin.signing import RsaConfigSigner
 from presidio_admin.store import ConfigStore
 
 
-def test_store_signature_invalid_is_the_only_alert(caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level(logging.ERROR, logger="presidio_admin.alert"):
+def test_store_signature_invalid_is_the_only_alert() -> None:
+    logger = alert_logger()
+    stderr_handlers = [handler for handler in logger.handlers if isinstance(handler, logging.StreamHandler)]
+    assert logger.propagate is False
+    assert len(stderr_handlers) == 1
+    assert stderr_handlers[0].stream is sys.stderr
+    buffer = io.StringIO()
+    stderr_handlers[0].stream = buffer
+    try:
         with pytest.raises(ConfigRejected):
             raise ConfigRejected("published_config_missing")
         with pytest.raises(ApprovalError):
             raise ApprovalError("stale_proposal")
-    assert "store_signature_invalid" not in caplog.text
-    caplog.clear()
-    with caplog.at_level(logging.ERROR, logger="presidio_admin.alert"):
+        assert buffer.getvalue() == ""
         with pytest.raises(ApprovalError):
             raise ApprovalError("store_signature_invalid")
-    assert caplog.text.count("alert reason_code=store_signature_invalid") == 1
+        assert buffer.getvalue() == "alert reason_code=store_signature_invalid\n"
+    finally:
+        stderr_handlers[0].stream = sys.stderr
 
 
 def test_default_config_is_default_deny() -> None:
