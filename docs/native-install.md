@@ -14,9 +14,9 @@ This VM is the Yellow lane only. It does not run Open WebUI or LiteLLM. Those ap
 |---|---|---|---|
 | Presidio analyzer | `/opt/presidio-analyzer/venv` | `presidio-analyzer` | `127.0.0.1:3000` HTTP, gunicorn |
 | Presidio anonymizer | `/opt/presidio-anonymizer/venv` | `presidio-anonymizer` | `127.0.0.1:3001` HTTP, gunicorn |
-| Redaction proxy | `/opt/presidio-redaction-mcp/venv` | `presidio-proxy` | `127.0.0.1:8443` and the VPN address `:8444`, TLS |
+| Redaction proxy | `/opt/presidio-redaction-mcp/venv` | `presidio-proxy` | VPN address `:8444`, TLS |
 
-cloudflared and WireGuard come from apt, not from a venv. cloudflared uses the Cloudflare apt repository. Nginx from apt terminates TLS for Presidio on `127.0.0.1:443` with `server_name presidio-tls`, so the allowlist URLs `https://presidio-tls/analyze` and `https://presidio-tls/anonymize` stay unchanged. `/etc/hosts` maps `presidio-tls` to `127.0.0.1`.
+WireGuard comes from apt, not from a venv. There is no cloudflared package and no Cloudflare listener. Nginx from apt terminates TLS for Presidio on `127.0.0.1:443` with `server_name presidio-tls`, so the allowlist URLs `https://presidio-tls/analyze` and `https://presidio-tls/anonymize` stay unchanged. `/etc/hosts` maps `presidio-tls` to `127.0.0.1`. Production start requires `PRM_AUTH_MODE=entra`. The VPN bearer listener is lab-only.
 
 Data directories sit on LUKS (full-disk encryption, or a LUKS volume that holds them):
 
@@ -66,7 +66,6 @@ LOG_LEVEL=INFO
 PRM_CONFIG=/opt/presidio-redaction-mcp/config/allowlist.yaml
 PRM_BIND_HOST=127.0.0.1
 PRM_VPN_BIND_HOST=10.8.0.1
-PRM_CF_PORT=8443
 PRM_VPN_PORT=8444
 PRM_AUDIT_PATH=/var/lib/presidio-redaction-mcp/audit/audit.jsonl
 PRM_AUDIT_STATE=/var/lib/presidio-redaction-mcp/audit/config-sha
@@ -91,9 +90,9 @@ Proxy unit (`/etc/systemd/system/presidio-redaction-mcp.service`):
 ```
 [Unit]
 Description=Presidio redaction MCP proxy
-After=network-online.target presidio-analyzer.service presidio-anonymizer.service presidio-tls.service
+After=network-online.target presidio-analyzer.service presidio-tls.service
 Wants=network-online.target
-Requires=presidio-analyzer.service presidio-anonymizer.service presidio-tls.service
+Requires=presidio-analyzer.service presidio-tls.service
 
 [Service]
 Type=simple
@@ -106,8 +105,6 @@ LoadCredential=tls_key:/etc/presidio-redaction-mcp/tls_key.pem
 LoadCredential=internal_ca:/etc/presidio-redaction-mcp/internal_ca.pem
 LoadCredential=audit_hmac_key:/etc/presidio-redaction-mcp/audit_hmac_key
 LoadCredential=grok_bot_token:/etc/presidio-redaction-mcp/grok_bot_token
-LoadCredential=grok_cf_access_client_id:/etc/presidio-redaction-mcp/grok_cf_access_client_id
-LoadCredential=grok_cf_access_client_secret:/etc/presidio-redaction-mcp/grok_cf_access_client_secret
 LoadCredential=claude_local_token:/etc/presidio-redaction-mcp/claude_local_token
 LoadCredential=open_webui_token:/etc/presidio-redaction-mcp/open_webui_token
 Environment=PRM_TLS_CERT_FILE=%d/tls_cert
@@ -115,8 +112,6 @@ Environment=PRM_TLS_KEY_FILE=%d/tls_key
 Environment=PRM_PRESIDIO_CA_FILE=%d/internal_ca
 Environment=PRM_SECRET_FILE_AUDIT_HMAC_KEY=%d/audit_hmac_key
 Environment=PRM_SECRET_FILE_GROK_BOT_TOKEN=%d/grok_bot_token
-Environment=PRM_SECRET_FILE_GROK_CF_ACCESS_CLIENT_ID=%d/grok_cf_access_client_id
-Environment=PRM_SECRET_FILE_GROK_CF_ACCESS_CLIENT_SECRET=%d/grok_cf_access_client_secret
 Environment=PRM_SECRET_FILE_CLAUDE_LOCAL_TOKEN=%d/claude_local_token
 Environment=PRM_SECRET_FILE_OPEN_WEBUI_TOKEN=%d/open_webui_token
 ExecStart=/opt/presidio-redaction-mcp/venv/bin/presidio-redaction-mcp
@@ -142,9 +137,9 @@ SystemCallArchitectures=native
 WantedBy=multi-user.target
 ```
 
-`%d` is the systemd credentials directory. Analyzer and anonymizer units use the same hardening block, with `ExecStart` set to the gunicorn command above, `User=` set to that app's user, and `ReadWritePaths=` set to that app's `/var/lib` directory. They have no `LoadCredential=` entries. The TLS front is nginx from apt, bound to `127.0.0.1:443`, proxying `/analyze` to `127.0.0.1:3000` and `/anonymize` to `127.0.0.1:3001`, certificates from the same `/etc/presidio-redaction-mcp/` files.
+`%d` is the systemd credentials directory. The analyzer unit uses the same hardening block. The optional anonymizer unit uses gunicorn on `127.0.0.1:3001` and `ConditionPathExists=/opt/presidio-anonymizer/app.py`. The installer does not enable that unit. The anonymizer that runs in Azure is the digest-pinned image. A `python -c` process that exits 0 is not a server. The TLS front is nginx from apt, bound to `127.0.0.1:443`, proxying `/analyze` to `127.0.0.1:3000` and `/anonymize` to `127.0.0.1:3001`, certificates from the same `/etc/presidio-redaction-mcp/` files.
 
-Install the units under `/etc/systemd/system/`, then `systemctl daemon-reload` and `systemctl enable --now` each unit. Running the installer twice must leave the same users, modes, pins, and units (idempotent).
+Install the units under `/etc/systemd/system/`, then `systemctl daemon-reload`. Enable the analyzer and the proxy. Leave `presidio-anonymizer.service` disabled unless `app.py` from tag 2.2.362 is present. Running the installer twice must leave the same users, modes, pins, and units (idempotent).
 
 ## Firewall
 
@@ -153,12 +148,12 @@ UFW default deny incoming and default deny outgoing.
 - In: loopback, and SSH (tcp/22) only from `PRM_MGMT_CIDR` (the VPN or management subnet). No public listener for the proxy, Presidio, or nginx.
 - Out, all hosts: loopback, DNS (tcp/udp 53), NTP (udp 123).
 - Out, root, install and unattended-upgrades only: the Ubuntu archive and security mirrors, and the reviewed PyPI index used to build the venvs.
-- Out, `cloudflared` user: tcp/443 for the tunnel. No inbound port.
+- No cloudflared egress. This install has no tunnel.
 - Out, WireGuard: udp to the configured peer only.
 - `presidio-analyzer` and `presidio-anonymizer`: loopback only.
 - `presidio-proxy`: loopback, plus a named allow only after Marko reviews a real upstream host. Phase 1 pins are `stackjack.invalid` and `composio.invalid`, so the proxy user has no general tcp/443 allow.
 
-Per-user rules use the iptables owner match where UFW cannot express a uid. The proxy user does not inherit cloudflared's or root's egress.
+Per-user rules use the iptables owner match where UFW cannot express a uid. The proxy user does not inherit root's egress.
 
 ## What the host must not do
 

@@ -143,8 +143,6 @@ class _IngressAuth:
                 self.settings.callers,
                 ingress=self.ingress,
                 authorization=headers.get("authorization"),
-                cf_client_id=None if private else headers.get("cf-access-client-id"),
-                cf_client_secret=None if private else headers.get("cf-access-client-secret"),
                 entra=self.entra if private else None,
             )
         except AuthError as exc:

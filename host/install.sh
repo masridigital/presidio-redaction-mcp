@@ -55,7 +55,6 @@ LOG_LEVEL=INFO
 PRM_CONFIG=/etc/presidio-redaction-mcp/allowlist.yaml
 PRM_BIND_HOST=127.0.0.1
 PRM_VPN_BIND_HOST=10.8.0.1
-PRM_CF_PORT=8443
 PRM_VPN_PORT=8444
 PRM_AUDIT_PATH=/var/lib/presidio-redaction-mcp/audit/audit.jsonl
 PRM_AUDIT_STATE=/var/lib/presidio-redaction-mcp/audit/config-sha
@@ -226,5 +225,6 @@ fi
 
 if [[ "${SKIP_SYSTEMD}" != "1" && "${ROOT}" == "/" ]]; then
   systemctl daemon-reload
-  systemctl enable presidio-analyzer.service presidio-anonymizer.service presidio-redaction-mcp.service
+  # The anonymizer unit is optional and stays disabled. Azure runs the digest-pinned image.
+  systemctl enable presidio-analyzer.service presidio-redaction-mcp.service
 fi

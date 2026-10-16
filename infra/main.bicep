@@ -31,6 +31,14 @@ param analyzerImage string
 @description('Digest-pinned anonymizer image. The analyzer image is not this one.')
 param anonymizerImage string
 
+var containerImageDigest = last(split(containerImage, '@sha256:'))
+var analyzerImageDigest = last(split(analyzerImage, '@sha256:'))
+var anonymizerImageDigest = last(split(anonymizerImage, '@sha256:'))
+
+assert containerImageDigestPinned = indexOf(containerImage, '@sha256:') > 0 && length(containerImageDigest) == 64
+assert analyzerImageDigestPinned = indexOf(analyzerImage, '@sha256:') > 0 && length(analyzerImageDigest) == 64
+assert anonymizerImageDigestPinned = indexOf(anonymizerImage, '@sha256:') > 0 && length(anonymizerImageDigest) == 64
+
 @description('Container Apps infrastructure subnet. Must be /21 or larger and dedicated.')
 param infraSubnetPrefix string = '10.40.0.0/21'
 

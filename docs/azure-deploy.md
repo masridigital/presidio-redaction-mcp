@@ -18,6 +18,16 @@ VNet `10.40.0.0/16` in `eastus`. The infrastructure subnet is `10.40.0.0/21`. AP
 
 The NSG allows VirtualNetwork, Entra JWKS (`AzureActiveDirectory` tcp/443), and Azure Monitor, then `deny-all-outbound`. There is no public IP resource.
 
+## Image pulls
+
+`deny-all-outbound` blocks a pull from the public Microsoft Container Registry and from the public Azure Container Registry endpoint. Image pulls stay on the VNet: put the three digest-pinned images in an Azure Container Registry and attach a private endpoint on the private-endpoint subnet `10.40.9.0/24`. The Container Apps environment pulls that registry over the private endpoint. The anonymizer digest stays the pinned 2.2.362 digest; the registry holds a copy of that image. This template does not add a public egress rule for `mcr.microsoft.com`.
+
+`containerImage`, `analyzerImage`, and `anonymizerImage` must contain `@sha256:` after a repository name, and the digest suffix must be 64 characters. Bicep `assert` rejects a floating tag.
+
+## Grok Bot edge
+
+Grok Bot has no path through the internal API Management instance. The two options for a later non-Cloudflare edge are in `docs/grok-bot-edge-options.md`. Neither is implemented in this template. The internal gateway stays internal.
+
 ## Auth
 
 API Management runs `infra/apim-policy.xml`: `validate-azure-ad-token` for the three pre-registered client ids, then `validate-jwt` against the pinned tenant v2 issuer. The policy deletes `X-MS-CLIENT-PRINCIPAL`, `X-APIM-CLIENT-ID`, and `Cf-Access-Jwt-Assertion`. The container verifies the bearer token again. Tenant `f7812296-5bce-41dc-8102-b1b270e7c4c7`.

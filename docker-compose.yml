@@ -26,7 +26,6 @@ services:
       PRM_AUDIT_PATH: /var/lib/presidio-redaction-mcp/audit/audit.jsonl
       PRM_AUDIT_STATE: /var/lib/presidio-redaction-mcp/audit/config-sha
     ports:
-      - "127.0.0.1:8443:8443"
       - "${PRM_VPN_BIND_ADDR:-10.8.0.1}:8444:8444"
     networks:
       - edge
@@ -37,8 +36,6 @@ services:
       - internal_ca
       - audit_hmac_key
       - grok_bot_token
-      - grok_cf_access_client_id
-      - grok_cf_access_client_secret
       - claude_local_token
       - open_webui_token
     volumes:
@@ -141,10 +138,6 @@ secrets:
     file: ${PRM_AUDIT_HMAC_KEY_FILE:-./secrets/audit_hmac_key}
   grok_bot_token:
     file: ${PRM_GROK_BOT_TOKEN_FILE:-./secrets/grok_bot_token}
-  grok_cf_access_client_id:
-    file: ${PRM_GROK_CF_ACCESS_CLIENT_ID_FILE:-./secrets/grok_cf_access_client_id}
-  grok_cf_access_client_secret:
-    file: ${PRM_GROK_CF_ACCESS_CLIENT_SECRET_FILE:-./secrets/grok_cf_access_client_secret}
   claude_local_token:
     file: ${PRM_CLAUDE_LOCAL_TOKEN_FILE:-./secrets/claude_local_token}
   open_webui_token:

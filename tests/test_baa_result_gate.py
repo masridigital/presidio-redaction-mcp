@@ -50,12 +50,8 @@ def test_cloudflare_ingress_cannot_be_phi_capable(tmp_path, monkeypatch):
         "baa": False,
         "allowed_ingress": ["cloudflare"],
         "token_secret": "edge_bot_token",
-        "cf_access_client_id_secret": "edge_cf_id",
-        "cf_access_client_secret_secret": "edge_cf_secret",
     }
     monkeypatch.setenv("PRM_SECRET_EDGE_BOT_TOKEN", SECRETS["grok_bot_token"][:-4] + "abcd")
-    monkeypatch.setenv("PRM_SECRET_EDGE_CF_ID", SECRETS["grok_cf_access_client_id"][:-4] + "abcd")
-    monkeypatch.setenv("PRM_SECRET_EDGE_CF_SECRET", SECRETS["grok_cf_access_client_secret"][:-4] + "abcd")
     with pytest.raises(ConfigError) as caught:
         _load(tmp_path, monkeypatch, mutated)
     assert caught.value.reason_code == "cloudflare_ingress_cannot_be_phi_capable"

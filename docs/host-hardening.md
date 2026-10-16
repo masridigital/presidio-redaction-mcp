@@ -1,6 +1,6 @@
 # Host hardening — Ubuntu Server LTS
 
-The primary deployment is Azure Container Apps (P2). This page is the optional on-prem VM. That VM is its **own VLAN**, not the local-ai-stack host. The Cloudflare-exposed proxy must not be able to reach Red-lane Open WebUI, LiteLLM, or Postgres. The on-prem install is native: venvs and systemd, as in `docs/native-install.md`. Cap's directive of 2026-10-15 23:26 ET is the standard for that host. Docker is not the on-prem runtime.
+The primary deployment is Azure Container Apps (P2). This page is the optional on-prem VM. That VM is its **own VLAN**, not the local-ai-stack host. This proxy has no Cloudflare ingress and must not be able to reach Red-lane Open WebUI, LiteLLM, or Postgres. The on-prem install is native: venvs and systemd, as in `docs/native-install.md`. Cap's directive of 2026-10-15 23:26 ET is the standard for that host. Docker is not the on-prem runtime.
 
 `deploy/install.sh` is the optional on-prem installer. It does not install Docker. The Ansible role mirrors it. `docker-compose.yml` is optional local development.
 
@@ -16,7 +16,7 @@ Keep the passphrase or key escrow separate from the VM backup set. Disposal of a
 
 ## UFW
 
-Default deny incoming and default deny outgoing. The written allowlist is in `docs/native-install.md`. Inbound is loopback plus SSH from `PRM_MGMT_CIDR` only. The proxy listens on `127.0.0.1:8443` (cloudflared, outbound) and on the VPN address `:8444`. Presidio listens on `127.0.0.1` only. Nginx for `presidio-tls` listens on `127.0.0.1:443` only.
+Default deny incoming and default deny outgoing. The written allowlist is in `docs/native-install.md`. Inbound is loopback plus SSH from `PRM_MGMT_CIDR` only. The lab proxy listens on the VPN address `:8444`. Production start requires Entra. There is no Cloudflare listener. Presidio listens on `127.0.0.1` only. Nginx for `presidio-tls` listens on `127.0.0.1:443` only.
 
 Egress is per service user where the firewall can express it. Analyzer and anonymizer users stay on loopback. The proxy user does not get a general tcp/443 allow. When the verifier is enabled, that user may open tcp/443 only to `api.anthropic.com` and `*.vault.azure.net`. Cloudflare hostnames stay denied. WireGuard (apt) may speak only to its configured peer.
 

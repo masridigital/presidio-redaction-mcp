@@ -21,11 +21,11 @@ Risk reduction for Yellow-lane tool data. Redaction is not HIPAA de-identificati
 
 | Caller | PHI-capable | Ingress | Token binding |
 |---|---|---|---|
-| `grok-bot` | No. Standing no-PHI rule. | Cloudflare Tunnel + Access only | Bearer plus Cloudflare Access service-token id and secret, compared in constant time |
-| `claude-local` | Yes | VPN only | Bearer |
-| `open-webui` | Yes | VPN only | Bearer |
+| `grok-bot` | No. Standing no-PHI rule. | No listener in this tree. The allowlist mark stays `cloudflare` so the result gate and `phi_in_cloudflare_tool_args` still apply. A future edge is `docs/grok-bot-edge-options.md` and is not built here. | Entra `NonPhi.Caller` when an edge exists. Lab bearer is VPN-only and rejects this caller. |
+| `claude-local` | Yes | VPN in lab. Private Entra ingress in production. | Bearer in lab. Entra JWT in production. |
+| `open-webui` | No, until local-ai-stack clears it. | VPN in lab. Private Entra ingress in production. | Bearer in lab. Entra JWT in production. |
 
-Tool arguments cross Cloudflare **before** Presidio when the caller is Grok Bot. Callers must not put PHI in tool arguments. The proxy still scans them and, on the Cloudflare ingress, **blocks** the call when any entity is detected (it does not forward a masked copy). That does not undo the hop that already happened; `phi_in_cloudflare_tool_args` is an incident candidate. PHI-capable callers stay on the VPN listener. Their arguments are masked before the no-PHI upstreams see them. A valid token on the wrong listener is 401 and makes no upstream call.
+A caller whose ingress mark is `cloudflare` is blocked when tool arguments contain an entity (`phi_in_cloudflare_tool_args`). This process does not serve a Cloudflare listener, so that path is not a live hop. PHI-capable callers use the VPN listener in lab and the private Entra ingress in production. Their arguments are masked before the no-PHI upstreams see them. A valid token on the wrong listener is 401 and makes no upstream call.
 
 A tool result that Presidio flags is **blocked**, not masked, for a non-BAA caller (`phi_capable: false`). The caller receives `phi_in_non_baa_tool_result` and not the redacted body. That check is in the service on the default path and does not depend on the optional verifier. PHI-capable callers still receive the masked result when the verifier is off.
 
@@ -45,7 +45,7 @@ Default deny. Read-only. No bulk export. Pagination caps (`max_items` ≤ 20). F
 
 ## Auth and TLS
 
-Separate bearer tokens for Grok Bot, local Claude, and Open WebUI. Rotation target remains 90 days and is a Phase 4 exposure gate, not a Phase 1 gap that may be ignored at exposure time. Constant-time compare. Cloudflare Access service token is bound to the Grok Bot profile. TLS from Phase 1 on both listeners, and TLS from the proxy to Presidio via the internal nginx sidecar. Certificates are Docker secrets on the optional compose path. The analyzer is the custom image in `deploy/presidio/Dockerfile`. The anonymizer image is `mcr.microsoft.com/presidio-anonymizer` at 2.2.362, pinned by digest, with no published ports.
+Separate bearer tokens for Grok Bot, local Claude, and Open WebUI remain for the lab VPN listener. Production refuses to start unless `auth_mode` is `entra`. Rotation target remains 90 days and is a Phase 4 exposure gate, not a Phase 1 gap that may be ignored at exposure time. Constant-time compare. There is no Cloudflare Access service token. TLS from the proxy to Presidio uses the internal nginx sidecar on the optional native path. Certificates are Docker secrets on the optional compose path. The analyzer is the custom image in `deploy/presidio/Dockerfile`. The anonymizer image is `mcr.microsoft.com/presidio-anonymizer` at 2.2.362, pinned by digest, with no published ports.
 
 ## Audit
 

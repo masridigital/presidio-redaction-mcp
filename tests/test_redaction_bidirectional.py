@@ -1,4 +1,4 @@
-"""Bidirectional redaction of every synthetic fixture, on VPN and on Cloudflare."""
+"""Bidirectional redaction of every synthetic fixture, on VPN and for the grok mark."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 import yaml
 
 from presidio_redaction_mcp.errors import FailClosed
-from tests.conftest import SECRETS, mcp_call, tool_text
+from tests.conftest import SECRETS, grok_call, mcp_call, tool_text
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -103,12 +103,10 @@ def test_every_fixture_is_masked_or_blocked_in_both_directions(stack):
 
         if form == "text":
             before = len(stack["runtime"].upstreams["stackjack"].calls)
-            blocked = mcp_call(
-                stack["cloudflare"],
-                SECRETS["grok_bot_token"],
+            blocked = grok_call(
+                stack,
                 "stackjack_search_docs",
                 {"query": case["value"], "limit": 1},
-                cloudflare=True,
             )
             assert "phi_in_cloudflare_tool_args" in tool_text(blocked), case
             assert case["value"] not in blocked.text

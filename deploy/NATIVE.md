@@ -8,7 +8,7 @@ Azure Container Apps is the primary deployment (`infra/`, `docs/azure-deploy.md`
 |---|---|---|
 | `presidio-analyzer.service` | `presidio-analyzer` | `127.0.0.1:5001` TLS |
 | `presidio-anonymizer.service` | `presidio-anonymizer` | `127.0.0.1:5002` TLS |
-| `presidio-redaction-mcp.service` | `presidio-proxy` | `127.0.0.1:8443` and `10.8.0.1:8444` TLS |
+| `presidio-redaction-mcp.service` | `presidio-proxy` | `10.8.0.1:8444` TLS in lab. Production is the private Entra listener. |
 | `presidio-wg0.service` | root (wg-quick) | `10.8.0.1/24`, listen UDP 51820 |
 
 Each app unit sets `ProtectSystem=strict`, `NoNewPrivileges=yes`, `PrivateTmp=yes`, and an empty `CapabilityBoundingSet=`. Versions are hash-pinned (`pip install --require-hashes`). The spaCy model is `en_core_web_lg` 3.8.0, sha256 `293e9547a655b25499198ab15a525b05b9407a75f10255e405e8c3854329ab63`.
@@ -23,7 +23,7 @@ UFW default-deny incoming and outgoing.
 
 - SSH (tcp/22) only from `PRM_MGMT_CIDR` (default `10.8.0.0/24`).
 - WireGuard handshake UDP 51820. The MCP port is not open on the public interface.
-- TCP 8444 is allowed only on `wg0` to `10.8.0.1`. That is the optional PHI-capable listener (local Claude and Open WebUI).
+- TCP 8444 is allowed only on `wg0` to `10.8.0.1`. That is the optional lab listener.
 - TCP 8443 is not in UFW.
 - Outbound for everyone else: loopback, DNS, NTP, then deny.
 
@@ -33,13 +33,13 @@ UFW default-deny incoming and outgoing.
 
 ## Ingress
 
-Production callers authenticate with Entra ID through Azure API Management on a private ingress. The container re-validates the JWT. Cloudflare Tunnel is not part of this deploy. PHI-capable callers on the optional VM use WireGuard. `deploy/wireguard/wg0.conf.template` is not installed as a live `wg0.conf`. Peers are `10.8.0.2/32` and upward. The VPN listener rejects any `Cf-*` header and rejects a client IP outside `10.8.0.0/24`.
+Production callers authenticate with Entra ID through Azure API Management on a private ingress. The container re-validates the JWT. Production refuses to start unless `auth_mode` is `entra`. Cloudflare Tunnel is not part of this deploy. PHI-capable callers on the optional VM use WireGuard. `deploy/wireguard/wg0.conf.template` is not installed as a live `wg0.conf`. Peers are `10.8.0.2/32` and upward. The VPN listener rejects a client IP outside `10.8.0.0/24`.
 
-The lab Cloudflare listener still checks the day-1 service-token headers used by tests. It is not the BAA path. Cloudflare Access JWTs are not accepted.
+There is no Cloudflare listener and no grok-bot service token. The `cloudflare` value on grok-bot is a non-PHI policy mark. Edge choices for a future door are in `docs/grok-bot-edge-options.md`. Cloudflare Access JWTs are not accepted.
 
 ## Result hits for grok-bot
 
-A Presidio hit in a tool result headed to grok-bot, or to any caller who is not an Entra-authenticated PHI caller on the private ingress, is **blocked** (`phi_in_non_phi_tool_result` or `phi_result_requires_private_entra`), not masked and returned. grok-bot stays usable because its allowlist is the structured tools `stackjack_health_check`, `stackjack_get_service_status`, and `UPTIMEROBOT_GET_MONITORS`, and free-text, date, and IP fields are dropped before redaction. A hit that remains in an allowed field is still blocked. Tool arguments on the Cloudflare lab listener are blocked when any entity is detected (`phi_in_cloudflare_tool_args`). Masked results are returned only to a PHI caller authenticated with Entra on the private ingress.
+A Presidio hit in a tool result headed to grok-bot, or to any caller who is not an Entra-authenticated PHI caller on the private ingress, is **blocked** (`phi_in_non_baa_tool_result`), not masked and returned. grok-bot stays usable because its allowlist is the structured tools `stackjack_health_check`, `stackjack_get_service_status`, and `UPTIMEROBOT_GET_MONITORS`, and free-text, date, and IP fields are dropped before redaction. A hit that remains in an allowed field is still blocked. Tool arguments for a caller marked `cloudflare` are blocked when any entity is detected (`phi_in_cloudflare_tool_args`). Masked results are returned only to a PHI caller authenticated with Entra on the private ingress. The optional anonymizer unit is not enabled. The anonymizer in Azure is the digest-pinned image.
 
 ## Audit
 

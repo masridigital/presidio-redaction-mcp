@@ -93,7 +93,8 @@ def test_compose_builds_the_custom_analyzer_and_publishes_no_presidio_ports():
     assert compose["networks"]["presidio_internal"]["internal"] is True
     published = text.split("ports:", 1)[1]
     assert "0.0.0.0:" not in published
-    assert "127.0.0.1:8443:8443" in text
+    assert "8443" not in text
+    assert "8444:8444" in text
     assert "secrets:" in text
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     assert "@sha256:" in dockerfile.splitlines()[0]
@@ -124,6 +125,13 @@ def test_systemd_units_are_hardened_and_native():
     assert "PRESIDIO_BIND=127.0.0.1" in analyzer
     assert "python -m presidio.serve" in analyzer
     assert "CapabilityBoundingSet=" in analyzer
+    anonymizer = (ROOT / "deploy" / "systemd" / "presidio-anonymizer.service").read_text(encoding="utf-8")
+    assert "raise SystemExit(0)" not in anonymizer
+    assert 'gunicorn -w 1 -b 127.0.0.1:3001 "app:create_app()"' in anonymizer
+    assert "ConditionPathExists=/opt/presidio-anonymizer/app.py" in anonymizer
+    installer = (ROOT / "host" / "install.sh").read_text(encoding="utf-8")
+    assert "systemctl enable presidio-analyzer.service presidio-redaction-mcp.service" in installer
+    assert "enable presidio-analyzer.service presidio-anonymizer.service" not in installer
     serve = (ROOT / "deploy" / "presidio" / "serve.py").read_text(encoding="utf-8")
     assert "register_us_recognizers(engine)" in serve
     assert "def do_POST" in serve

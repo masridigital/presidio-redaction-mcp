@@ -41,11 +41,11 @@ Test fixtures are a separate rule: synthetic only, Faker seed 4242, header `SYNT
 
 | Caller | PHI-capable | Path to the proxy | What the upstream sees |
 |---|---|---|---|
-| `grok-bot` | No. Standing no-PHI rule. | Cloudflare Tunnel + Access | Nothing, when inbound Presidio finds an entity. The call is blocked and audited as `phi_in_cloudflare_tool_args`. |
-| `claude-local` | Yes | VPN only | Masked arguments, and only for a day-1 tool |
-| `open-webui` | Yes | VPN only | Masked arguments, and only for a day-1 tool |
+| `grok-bot` | No. Standing no-PHI rule. | No public door in this tree. The policy mark stays non-PHI. See `docs/grok-bot-edge-options.md`. | Nothing, when inbound Presidio finds an entity. The call is blocked and audited as `phi_in_cloudflare_tool_args`. |
+| `claude-local` | Yes | VPN in lab. Private Entra ingress in production. | Masked arguments, and only for a day-1 tool |
+| `open-webui` | No, until local-ai-stack clears it. | VPN in lab. Private Entra ingress in production. | Masked arguments, and only for a day-1 tool |
 
-Tool arguments from Grok Bot cross Cloudflare before Presidio. Callers do not put PHI in tool arguments. Blocking the call does not undo that hop. PHI-capable callers stay on the VPN listener. A valid token on the wrong listener is 401 and makes no upstream call.
+A grok-bot call is evaluated with the `cloudflare` ingress mark, which blocks entity hits in tool arguments. This process does not open a Cloudflare listener. PHI-capable callers stay on the VPN listener in lab and on the private Entra ingress in production. A valid token on the wrong listener is 401 and makes no upstream call.
 
 Upstream requests use the allowlist pins directly. Phase 1 upstreams are mocks (`mode: mock`) and do not dial a routable host. grok-bot is limited to structured tools, and free-text, date, and IP result fields are dropped before redaction. A remaining entity hit is blocked.
 

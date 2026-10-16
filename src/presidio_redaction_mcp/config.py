@@ -268,12 +268,9 @@ class ListenerSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     vpn_cidr: str = "10.8.0.0/24"
-    cloudflare_allowed_hosts: list[str]
     vpn_allowed_hosts: list[str]
-    access_issuer: str
-    access_audience: str
 
-    @field_validator("cloudflare_allowed_hosts", "vpn_allowed_hosts")
+    @field_validator("vpn_allowed_hosts")
     @classmethod
     def _hosts(cls, value: list[str]) -> list[str]:
         if not value:
@@ -352,8 +349,8 @@ class AllowlistFile(BaseModel):
         grok = self.callers["grok-bot"]
         if grok.phi_capable or grok.baa or grok.allowed_ingress != ["cloudflare"]:
             raise ValueError("grok_bot_must_be_cloudflare_non_phi")
-        if not grok.cf_access_client_id_secret or not grok.cf_access_client_secret_secret:
-            raise ValueError("grok_bot_cf_service_token_required")
+        if grok.cf_access_client_id_secret or grok.cf_access_client_secret_secret:
+            raise ValueError("grok_bot_cf_service_token_forbidden")
         if set(grok.allowed_tools) != _GROK_TOOLS:
             raise ValueError("grok_bot_tools_must_be_structured")
         if not _GROK_DENIED_FIELDS <= set(grok.denied_result_fields):
@@ -396,9 +393,6 @@ class Settings(BaseModel):
     tls_cert_file: str | None
     tls_key_file: str | None
     presidio_ca_file: str | None
-    access_issuer: str = ""
-    access_audience: str = ""
-    access_jwks: dict[str, Any] = Field(default_factory=dict)
     audit_forward: str | None = None
     auth_mode: str = "bearer"
     entra_audience: str = ""
@@ -474,19 +468,17 @@ def load_settings(config_path: Path, *, env: str | None = None) -> Settings:
     hmac_key = secrets["audit_hmac_key"].encode("utf-8")
     callers = tuple(_caller_secret(name, spec, secrets) for name, spec in parsed.callers.items())
     _reject_duplicate_caller_tokens(callers)
-    issuer = os.environ.get("PRM_ACCESS_ISSUER", parsed.listeners.access_issuer).strip()
-    audience = os.environ.get("PRM_ACCESS_AUDIENCE", parsed.listeners.access_audience).strip()
     auth_mode = os.environ.get("PRM_AUTH_MODE", "bearer").strip() or "bearer"
     if auth_mode not in {"bearer", "entra"}:
         raise ConfigError("auth_mode_invalid")
+    if env_name == "production" and auth_mode != "entra":
+        raise ConfigError("entra_required")
     azure_internal = os.environ.get("PRM_AZURE_INTERNAL") == "1"
     parsed = _apply_presidio_url_overrides(parsed)
     if auth_mode == "entra":
         entra_audience, entra_clients = _entra_clients(parsed)
-        jwks: dict[str, Any] = {}
     else:
         entra_audience, entra_clients = "", ()
-        jwks = _load_access_jwks(env_name)
     baa_client_ids = frozenset(
         client.app_id.lower() for client in entra_clients if parsed.callers[client.name].baa
     )
@@ -499,12 +491,8 @@ def load_settings(config_path: Path, *, env: str | None = None) -> Settings:
         if set(parsed.egress.presidio_hosts) != {"127.0.0.1"}:
             raise ConfigError("presidio_must_be_loopback")
         tls_cert, tls_key, ca_file = _tls_paths()
-        if auth_mode == "entra":
-            if not entra_audience or not entra_clients:
-                raise ConfigError("entra_not_configured")
-        else:
-            if _PLACEHOLDER.search(issuer) or _PLACEHOLDER.search(audience) or not jwks:
-                raise ConfigError("access_not_configured")
+        if auth_mode != "entra" or not entra_audience or not entra_clients:
+            raise ConfigError("entra_required" if auth_mode != "entra" else "entra_not_configured")
         if not azure_internal:
             for path in (tls_cert, tls_key, ca_file):
                 if not path or not Path(path).is_file():
@@ -537,9 +525,6 @@ def load_settings(config_path: Path, *, env: str | None = None) -> Settings:
         tls_cert_file=tls_cert,
         tls_key_file=tls_key,
         presidio_ca_file=ca_file,
-        access_issuer=issuer,
-        access_audience=audience,
-        access_jwks=jwks,
         audit_forward=forward,
         auth_mode=auth_mode,
         entra_audience=entra_audience,
@@ -656,33 +641,6 @@ def _tls_paths() -> tuple[str | None, str | None, str | None]:
         key = key or str(cred / "tls_key")
         ca_file = ca_file or str(cred / "internal_ca")
     return cert, key, ca_file
-
-
-def _load_access_jwks(env_name: str) -> dict[str, Any]:
-    override = os.environ.get("PRM_ACCESS_JWKS_FILE")
-    credentials = os.environ.get("CREDENTIALS_DIRECTORY")
-    candidates: list[Path] = []
-    if override:
-        candidates.append(Path(override))
-    if credentials:
-        candidates.append(Path(credentials) / "access_jwks")
-    candidates.append(Path("/etc/presidio-redaction-mcp/access-jwks.json"))
-    for path in candidates:
-        if path.is_file():
-            try:
-                loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-            except Exception as exc:
-                raise ConfigError("access_jwks_invalid") from exc
-            if isinstance(loaded, str):
-                import json
-
-                loaded = json.loads(loaded)
-            if not isinstance(loaded, dict) or not isinstance(loaded.get("keys"), list) or not loaded["keys"]:
-                raise ConfigError("access_jwks_invalid")
-            return loaded
-    if env_name == "production":
-        raise ConfigError("access_not_configured")
-    return {}
 
 
 def _caller_secret(name: str, spec: CallerSpec, secrets: dict[str, str]) -> CallerSecret:

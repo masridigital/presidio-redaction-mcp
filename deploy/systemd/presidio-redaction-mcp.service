@@ -2,8 +2,8 @@
 # The MCR analyzer image is not started. This unit starts the venv entrypoint.
 [Unit]
 Description=Presidio redaction MCP proxy (optional native; Azure Container Apps is primary)
-After=network-online.target presidio-analyzer.service presidio-anonymizer.service
-Wants=network-online.target presidio-analyzer.service presidio-anonymizer.service
+After=network-online.target presidio-analyzer.service
+Wants=network-online.target presidio-analyzer.service
 
 [Service]
 Type=simple
@@ -13,8 +13,6 @@ WorkingDirectory=/opt/presidio-redaction-mcp
 EnvironmentFile=/etc/presidio-redaction-mcp/proxy.env
 LoadCredential=audit_hmac_key:/etc/presidio-redaction-mcp/secrets/audit_hmac_key
 LoadCredential=grok_bot_token:/etc/presidio-redaction-mcp/secrets/grok_bot_token
-LoadCredential=grok_cf_access_client_id:/etc/presidio-redaction-mcp/secrets/grok_cf_access_client_id
-LoadCredential=grok_cf_access_client_secret:/etc/presidio-redaction-mcp/secrets/grok_cf_access_client_secret
 LoadCredential=claude_local_token:/etc/presidio-redaction-mcp/secrets/claude_local_token
 LoadCredential=open_webui_token:/etc/presidio-redaction-mcp/secrets/open_webui_token
 LoadCredential=tls_cert:/etc/presidio-redaction-mcp/tls/proxy.pem

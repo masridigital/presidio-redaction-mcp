@@ -1,4 +1,4 @@
-"""Serve the Azure private listener, or the lab listeners when Entra mode is off."""
+"""Serve the Azure private listener. Lab mode is the VPN bearer listener only."""
 
 from __future__ import annotations
 
@@ -27,6 +27,8 @@ def main() -> None:
     )
     api_key = resolve_verifier_key(settings) if settings.allowlist.verifier.enabled else None
     runtime = build_runtime(settings, audit, anthropic_api_key=api_key)
+    if settings.env == "production" and settings.auth_mode != "entra":
+        raise SystemExit(1)
     if settings.auth_mode == "entra":
         _serve_azure(runtime.private_app)
         return
@@ -44,29 +46,17 @@ def _serve_azure(app: object) -> None:
 
 
 def _serve_lab(runtime: object, settings: object) -> None:
-    bind_host = os.environ.get("PRM_BIND_HOST", "127.0.0.1")
+    if getattr(settings, "env", "") == "production" or getattr(settings, "auth_mode", "") == "entra":
+        raise SystemExit(1)
     vpn_host = os.environ.get("PRM_VPN_BIND_HOST", "10.8.0.1")
-    cf_port = int(os.environ.get("PRM_CF_PORT", "8443"))
     vpn_port = int(os.environ.get("PRM_VPN_PORT", "8444"))
-    if bind_host not in {"127.0.0.1", "::1"} or vpn_host in {"0.0.0.0", "::", ""}:  # nosec B104
+    if vpn_host in {"0.0.0.0", "::", ""}:  # nosec B104
         raise SystemExit(1)
     tls_cert = getattr(settings, "tls_cert_file", None)
     tls_key = getattr(settings, "tls_key_file", None)
     ssl_kwargs = {"ssl_certfile": tls_cert, "ssl_keyfile": tls_key}
-    if getattr(settings, "env", "") == "production" and (not tls_cert or not tls_key):
-        raise SystemExit(1)
 
     async def serve() -> None:
-        cf_server = uvicorn.Server(
-            uvicorn.Config(
-                runtime.cloudflare_app,  # type: ignore[attr-defined]
-                host=bind_host,
-                port=cf_port,
-                log_level="info",
-                access_log=False,
-                **ssl_kwargs,
-            )
-        )
         vpn_server = uvicorn.Server(
             uvicorn.Config(
                 runtime.vpn_app,  # type: ignore[attr-defined]
@@ -77,7 +67,7 @@ def _serve_lab(runtime: object, settings: object) -> None:
                 **ssl_kwargs,
             )
         )
-        await asyncio.gather(cf_server.serve(), vpn_server.serve())
+        await vpn_server.serve()
 
     asyncio.run(serve())
 

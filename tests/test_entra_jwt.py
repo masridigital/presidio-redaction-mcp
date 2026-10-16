@@ -156,6 +156,40 @@ def test_jwks_fetch_errors_fail_closed_and_drop_the_cache():
     assert state["calls"] == 3
 
 
+def test_unknown_kid_refreshes_jwks_once():
+    key, current = _key_and_jwks()
+    stale = {"keys": [{**current["keys"][0], "kid": "old"}]}
+    state = {"calls": 0}
+
+    def fetcher():
+        state["calls"] += 1
+        return stale if state["calls"] == 1 else current
+
+    principal = _verifier(current, fetcher=fetcher).verify(_encode(key))
+    assert principal.name == "claude-local"
+    assert state["calls"] == 2
+
+
+def test_unknown_kid_refresh_does_not_loop():
+    key, missing = _key_and_jwks()
+    missing = {"keys": [{**missing["keys"][0], "kid": "other"}]}
+    state = {"calls": 0}
+
+    def fetcher():
+        state["calls"] += 1
+        return missing
+
+    verifier = _verifier(missing, fetcher=fetcher)
+    with pytest.raises(AuthError) as caught:
+        verifier.verify(_encode(key))
+    assert caught.value.reason_code == "jwks_key_missing"
+    assert state["calls"] == 2
+    with pytest.raises(AuthError) as again:
+        verifier.verify(_encode(key))
+    assert again.value.reason_code == "jwks_key_missing"
+    assert state["calls"] == 2
+
+
 def test_empty_jwks_document_fails_closed():
     key, _jwks = _key_and_jwks()
     with pytest.raises(AuthError) as caught:
