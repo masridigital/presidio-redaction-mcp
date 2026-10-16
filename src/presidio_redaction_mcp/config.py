@@ -15,6 +15,7 @@ from presidio_redaction_mcp.auth import CallerSecret, digest
 from presidio_redaction_mcp.egress import EgressPolicy
 from presidio_redaction_mcp.errors import ConfigError
 from presidio_redaction_mcp.recognizers import RecognizerSet, load_recognizers
+from presidio_redaction_mcp.verifier_policy import model_allowed
 
 ALLOWED_UPSTREAMS = frozenset({"stackjack", "composio"})
 MAX_PAGE_ITEMS = 20
@@ -141,6 +142,59 @@ class CallerSpec(BaseModel):
     cf_access_client_secret_secret: str | None = None
 
 
+class DeploymentSpec(BaseModel):
+    """Where this process is allowed to run. Only Azure may be marked BAA."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target: Literal["azure", "cloudflare", "non-baa"]
+    baa: bool
+
+    @model_validator(mode="after")
+    def _mark(self) -> DeploymentSpec:
+        if self.baa and self.target != "azure":
+            raise ValueError("baa_mark_requires_azure_target")
+        return self
+
+
+class VerifierSpec(BaseModel):
+    """Optional Claude second pass. Off unless a BAA deployment enables it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    model: str = "claude-sonnet-4-5"
+    timeout_seconds: float = Field(default=8.0, gt=0, le=30)
+    max_tokens: int = Field(default=256, ge=64, le=1024)
+    key_vault_url: str | None = None
+    key_vault_secret: str | None = None
+
+    @field_validator("model")
+    @classmethod
+    def _model(cls, value: str) -> str:
+        if not model_allowed(value):
+            raise ValueError("verifier_model_not_allowlisted")
+        return value
+
+    @field_validator("key_vault_url")
+    @classmethod
+    def _vault(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not re.fullmatch(r"https://[a-z0-9-]{3,24}\.vault\.azure\.net", value):
+            raise ValueError("key_vault_url_rejected")
+        return value
+
+    @field_validator("key_vault_secret")
+    @classmethod
+    def _secret_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not re.fullmatch(r"[A-Za-z0-9-]{1,127}", value):
+            raise ValueError("key_vault_secret_rejected")
+        return value
+
+
 class PresidioSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -166,6 +220,8 @@ class AllowlistFile(BaseModel):
     callers: dict[str, CallerSpec]
     presidio: PresidioSpec
     egress: EgressSpec
+    deployment: DeploymentSpec
+    verifier: VerifierSpec = Field(default_factory=VerifierSpec)
     recognizers_file: str
     max_payload_bytes: int = Field(default=262144, gt=0, le=1_000_000)
 
@@ -207,6 +263,8 @@ class AllowlistFile(BaseModel):
                 raise ValueError("vpn_caller_must_not_bind_cf_token")
         if set(self.egress.upstream_hosts) != {"stackjack.invalid", "composio.invalid"}:
             raise ValueError("egress_upstreams_must_be_phase1_pins")
+        if self.verifier.enabled and (self.deployment.target != "azure" or not self.deployment.baa):
+            raise ValueError("verifier_refused_non_baa_target")
         return self
 
 
@@ -227,13 +285,25 @@ class Settings(BaseModel):
     presidio_ca_file: str | None
 
 
+def assert_verifier_permitted(source: Settings | AllowlistFile) -> None:
+    """Refuse to enable the verifier when the deployment target is marked non-BAA."""
+    allowlist = source.allowlist if isinstance(source, Settings) else source
+    if not allowlist.verifier.enabled:
+        return
+    if allowlist.deployment.target != "azure" or not allowlist.deployment.baa:
+        raise ConfigError("verifier_refused_non_baa_target")
+
+
 def load_settings(config_path: Path, *, env: str | None = None) -> Settings:
     env_name = env or os.environ.get("PRM_ENV", "production")
     raw_bytes = config_path.read_bytes()
     try:
         parsed = AllowlistFile.model_validate(yaml.safe_load(raw_bytes))
     except Exception as exc:
+        if "verifier_refused_non_baa_target" in str(exc):
+            raise ConfigError("verifier_refused_non_baa_target") from exc
         raise ConfigError("allowlist_rejected") from exc
+    assert_verifier_permitted(parsed)
     recognizer_path = config_path.parent / parsed.recognizers_file
     if not recognizer_path.is_file():
         recognizer_path = config_path.parent.parent / parsed.recognizers_file

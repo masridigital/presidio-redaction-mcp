@@ -16,6 +16,7 @@ from presidio_redaction_mcp.egress import EgressPolicy
 from presidio_redaction_mcp.errors import FailClosed, PolicyError
 from presidio_redaction_mcp.redact import Redactor, count_items, filter_fields
 from presidio_redaction_mcp.upstream import MockUpstream
+from presidio_redaction_mcp.verifier import ClaudeVerifier
 
 _ARG_NAME = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _INJECTION = re.compile(
@@ -61,12 +62,14 @@ class RedactionService:
         redactor: Redactor,
         upstreams: dict[str, MockUpstream],
         rate_limiter: RateLimiter | None = None,
+        verifier: ClaudeVerifier | None = None,
     ) -> None:
         self.settings = settings
         self.audit = audit
         self.redactor = redactor
         self.upstreams = upstreams
         self.rate_limiter = rate_limiter or RateLimiter()
+        self.verifier = verifier
         self._tools = tool_index(settings)
 
     async def call_tool(self, caller: CallerIdentity, name: str, arguments: dict[str, Any] | None) -> str:
@@ -132,6 +135,29 @@ class RedactionService:
                 tool=name,
                 args_hmac=args_hmac,
                 counts={},
+                decision="block",
+                reason=exc.reason_code,
+                started=started,
+            )
+            return _error(exc.reason_code)
+
+        try:
+            await self._second_pass(
+                caller,
+                upstream=upstream_name,
+                tool=name,
+                value=redacted_args,
+                counts=arg_counts,
+                direction="input",
+                started=started,
+            )
+        except FailClosed as exc:
+            self._audit(
+                caller,
+                upstream=upstream_name,
+                tool=name,
+                args_hmac=args_hmac,
+                counts=arg_counts,
                 decision="block",
                 reason=exc.reason_code,
                 started=started,
@@ -210,6 +236,44 @@ class RedactionService:
             )
             return _error(exc.reason_code)
 
+        # Non-BAA callers never receive a masked result. This runs on the default
+        # path and does not depend on the optional verifier.
+        if not caller.phi_capable and _sensitive(result_counts):
+            self._audit(
+                caller,
+                upstream=upstream_name,
+                tool=name,
+                args_hmac=args_hmac,
+                counts=_merge(arg_counts, result_counts),
+                decision="block",
+                reason="phi_in_non_baa_tool_result",
+                started=started,
+            )
+            return _error("phi_in_non_baa_tool_result")
+
+        try:
+            await self._second_pass(
+                caller,
+                upstream=upstream_name,
+                tool=name,
+                value=redacted_result,
+                counts=result_counts,
+                direction="result",
+                started=started,
+            )
+        except FailClosed as exc:
+            self._audit(
+                caller,
+                upstream=upstream_name,
+                tool=name,
+                args_hmac=args_hmac,
+                counts=_merge(arg_counts, result_counts),
+                decision="block",
+                reason=exc.reason_code,
+                started=started,
+            )
+            return _error(exc.reason_code)
+
         counts = _merge(arg_counts, result_counts)
         redacted_result = scrub_secrets(
             strip_instructions(redacted_result),
@@ -278,10 +342,68 @@ class RedactionService:
             config_sha256=self.settings.config_sha256,
         )
 
+    async def _second_pass(
+        self,
+        caller: CallerIdentity,
+        *,
+        upstream: str,
+        tool: str,
+        value: Any,
+        counts: dict[str, int],
+        direction: str,
+        started: float,
+    ) -> None:
+        if self.verifier is None:
+            return
+        rendered = _canonical(value)
+        input_hmac = _text_hmac(self.settings.audit_hmac_key, rendered)
+        model = self.verifier.model
+
+        def row(decision: str, reason: str, verdict: str | None, entity_counts: dict[str, int]) -> None:
+            self.audit.record_verifier(
+                caller=caller.name,
+                ingress=caller.ingress,
+                upstream=upstream,
+                tool=tool,
+                direction=direction,
+                decision=decision,
+                reason_code=reason,
+                verdict=verdict,
+                entity_counts=entity_counts,
+                input_hmac=input_hmac,
+                model=model,
+                latency_ms=(time.perf_counter() - started) * 1000,
+                config_sha256=self.settings.config_sha256,
+            )
+
+        if _sensitive(counts):
+            row("block", "presidio_flagged", None, counts)
+            raise FailClosed("presidio_flagged")
+        try:
+            outcome = await self.verifier.verify(rendered)
+        except FailClosed as exc:
+            row("block", exc.reason_code, None, {})
+            raise
+        if outcome.verdict != "clear":
+            reason = "verifier_flagged" if outcome.verdict == "phi" else "verifier_uncertain"
+            row("block", reason, outcome.verdict, outcome.entity_counts())
+            raise FailClosed(reason)
+        row("allow", "ok", "clear", {})
+
+
+def _canonical(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
 
 def _args_hmac(key: bytes, arguments: dict[str, Any]) -> str:
-    canonical = json.dumps(arguments, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    canonical = _canonical(arguments).encode("utf-8")
     return hmac.new(key, canonical, hashlib.sha256).hexdigest()
+
+
+def _text_hmac(key: bytes, text: str) -> str:
+    return hmac.new(key, text.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def _error(reason_code: str) -> str:

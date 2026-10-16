@@ -50,6 +50,8 @@ def stack(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     import asyncio
 
     asyncio.run(runtime.presidio.aclose())
+    if runtime.verifier is not None:
+        asyncio.run(runtime.verifier.aclose())
 
 
 def mcp_headers(token: str, *, cloudflare: bool = False) -> dict[str, str]:

@@ -1,0 +1,48 @@
+# Best-practices compliance
+
+P2 owns the full practice map for this proxy. This file is the verifier section that map folds in, plus the gaps this change does not close. Marko checks the citations at re-review.
+
+## Verifier (P4)
+
+The Claude second pass is optional and off by default. It may be enabled only when the deployment target is Azure and marked BAA (`deployment.target: azure`, `deployment.baa: true`). That is the Microsoft BAA for the host plus Cap's Anthropic BAA with zero data retention for the Messages call. A target marked non-BAA, including Cloudflare, fails config load and process start. There is no local-stack-only refusal: Azure is an allowed place to run it. Cloudflare is not, because Cloudflare has no BAA.
+
+Order is raw, then Presidio and the deterministic recognizers, then Claude on the already redacted text, then forward. Inputs and tool results both take the pass. Fail closed when either pass flags, or when Claude is uncertain, times out, errors, echoes the submitted text, or returns a body that is not the schema. Claude's output is untrusted. The schema is a verdict enum plus span offsets and entity types, with `additionalProperties: false` and no free-text field. The proxy validates that schema itself and rejects any other shape, including a preamble, a tool block, or a clear verdict that still carries spans.
+
+Prompt injection: the submitted text is wrapped in `<<<PRM_UNTRUSTED_BEGIN>>>` and `<<<PRM_UNTRUSTED_END>>>`. The system prompt says text inside the markers is data. If the text contains a marker or an instruction-like override (ignore previous instructions, a planted verdict, a system tag), the proxy blocks and does not trust a clear verdict.
+
+The wire is `POST https://api.anthropic.com/v1/messages` only. Headers are `content-type`, `x-api-key`, `anthropic-version: 2023-06-01`, and `accept`. There is no `anthropic-beta` header. The body may contain `model`, `max_tokens`, `system`, `messages`, and `output_config` (structured outputs). It does not contain tools, files, batches, or web search. The model allowlist excludes Fable and Mythos, which require 30-day retention and are outside ZDR. The JSON schema sent upstream contains type names only, never payload text. Anthropic caches that schema; PHI does not belong in it.
+
+The API key comes from Azure Key Vault (managed identity, `*.vault.azure.net`) or a `0600`/`0400` LoadCredential file. Verifier audit rows store an HMAC of the redacted text, the verdict, and entity-type counts. They do not store the text or the key. Egress denies any Cloudflare hostname on the verifier and Key Vault paths.
+
+A non-BAA caller (`phi_capable: false`) does not receive a masked tool result. If Presidio flags the result, the service blocks with `phi_in_non_baa_tool_result` and discards the body. That check is on the default path and does not depend on `verifier.enabled`. PHI-capable callers still receive the mask when the verifier is off. Phase 1 payload protection stays: rate limit, secret scrub, instruction strip, and `description_sha256`.
+
+Code: `src/presidio_redaction_mcp/verifier.py`, `verifier_policy.py`, `key_vault.py`, `service.py`, `egress.py`, `config.py`. Tests: `tests/test_verifier.py`.
+
+### Citations for this section
+
+| Practice | Source | Where it lands | Status |
+|---|---|---|---|
+| Messages API, structured outputs, no tools or beta header | [Anthropic BAA](https://privacy.claude.com/en/articles/8114513-business-associate-agreements-baa-for-commercial-customers), [data retention / ZDR](https://platform.claude.com/docs/en/manage-claude/api-and-data-retention), [structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs), [Messages](https://platform.claude.com/docs/en/api/messages) | `verifier.py` request builder; model allowlist in `verifier_policy.py` | Fixed in this PR. Test asserts the body keys, the schema, and the absence of `anthropic-beta`. |
+| PHI stays out of the JSON schema | Same retention doc, structured-outputs PHI note | `verdict_schema()` uses type names and enums only | Fixed in this PR. |
+| Untrusted model output, strict schema | [MCP tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools) (validate outputs; treat tool metadata as untrusted) | `Verdict` is `extra=forbid` and strict. Extra text, tool blocks, and bad offsets fail closed | Fixed in this PR. Tests cover malformed, extra fields, tool_use, bad spans, echo. |
+| Prompt injection cannot steer the verdict | [MCP security best practices](https://modelcontextprotocol.io/docs/2026-07-28/tutorials/security/security_best_practices), [MCP authorization security](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/security-considerations) | Delimiters plus `instruction_override` | Fixed in this PR. Test: override blocks with zero Anthropic calls. |
+| Secrets out of payloads and logs; HMAC audit | [Azure MCP server security](https://learn.microsoft.com/en-us/azure/developer/azure-mcp-server/security) (Key Vault, no secrets in source) | `key_vault.py`, `audit.record_verifier`, log scrub for `x-api-key` | Fixed in this PR. Tests: 0600 file, Key Vault mock, audit has no raw value and no key. |
+| No Cloudflare on the verifier leg | [Cloudflare has no BAA]. Remote MCP and Access docs describe the product we are not using for this hop: [remote MCP](https://developers.cloudflare.com/agents/model-context-protocol/guides/remote-mcp-server/), [Access authorization](https://developers.cloudflare.com/agents/model-context-protocol/protocol/authorization/), [securing MCP servers](https://developers.cloudflare.com/agents/model-context-protocol/guides/securing-mcp-server/) | `egress.py` denies Cloudflare hosts. Non-BAA deployment mark refuses enablement | Fixed in this PR. Test: `test_raw_leg_never_crosses_cloudflare`. |
+| Non-BAA target cannot enable the verifier | Cap, 2026-10-16, Azure under the Microsoft BAA | `assert_verifier_permitted` | Fixed in this PR. Test covers `non-baa`, `azure` with `baa: false`, and `cloudflare`. |
+
+## Gaps left for the P2 lane
+
+Each line is a deferral. This PR does not claim the rest of the Cloudflare or Microsoft MCP map.
+
+| Practice | Source | Status |
+|---|---|---|
+| Cloudflare remote MCP as the hosting model | [Remote MCP server](https://developers.cloudflare.com/agents/model-context-protocol/guides/remote-mcp-server/) | Deferred. Hosting is Azure under the Microsoft BAA. The verifier refuses a non-BAA mark. The Phase 1 Cloudflare listener for `grok-bot` is still in the tree and is out of scope for this change. |
+| Agents SDK OAuth (`workers-oauth-provider`) | [Authorization](https://developers.cloudflare.com/agents/model-context-protocol/protocol/authorization/), [workers-oauth-provider](https://developers.cloudflare.com/agents/model-context-protocol/guides/securing-mcp-server/) | Deferred. This process is not a Cloudflare Worker. |
+| Workers security best practices | [Workers security model](https://developers.cloudflare.com/workers/reference/security-model/) | Deferred. Not a Workers deployment. |
+| Cloudflare Access and Tunnel as the production edge | [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/identity/service-tokens/) | Deferred. Phase 1 still has a service-token check on the Cloudflare listener. Production hosting for the verifier is Azure. JWT verification of `Cf-Access-Jwt-Assertion` was already an open item and is not this PR. |
+| Azure API Management as the AI/MCP gateway | [Secure MCP servers in API Management](https://learn.microsoft.com/en-us/azure/api-management/secure-mcp-servers) | Deferred. The proxy is still this process, not an APIM policy set. |
+| Entra ID for MCP callers | [Secure an MCP server with Entra ID](https://learn.microsoft.com/en-us/entra/agent-id/secure-mcp-server-with-entra-id) | Deferred. Callers still use bearer tokens. Entra was Phase 2 in `PLAN.md`. |
+| Per-tool authn/authz, least privilege, strict input schemas | [Azure MCP security](https://learn.microsoft.com/en-us/azure/developer/azure-mcp-server/security), [MCP tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools) | Already in Phase 1 (`auth.py`, allowlist, `extra` rejected on config). Not changed here except the verifier schema. |
+| Pinned tool-description hashes and stripping instructions from upstream results | [MCP tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools) (annotations are untrusted) | Kept from Phase 1 (PR #4). `description_sha256`, `strip_instructions`, and `scrub_secrets` still run. This PR does not replace them. |
+| Rate limits | [MCP tools](https://modelcontextprotocol.io/specification/2026-07-28/server/tools) | Kept from Phase 1 (PR #4). `RateLimiter` still denies with `rate_limited` before another upstream call. |
+| Hash-locked requirements and SHA-pinned GitHub Actions | Cap native-install directive | Kept from main. CI installs with `--require-hashes` and SHA-pinned actions, including the `presidio-native` job. This PR does not replace that workflow. |

@@ -49,6 +49,7 @@ class MockUpstream:
     force_overflow: bool = False
     break_stream: bool = False
     stream_token: str = "MRN-SYN-0001234"
+    result_body: Any = None
 
     async def call(self, tool: ToolSpec, arguments: dict[str, Any]) -> Any:
         if "cloudflare" in self.base_url.lower() or "trycloudflare" in self.base_url.lower():
@@ -74,6 +75,8 @@ class MockUpstream:
                 arguments=arguments,
             )
         )
+        if self.result_body is not None:
+            return self.result_body
         item_count = 21 if self.force_overflow else int(arguments.get("limit") or 1)
         items = [
             {

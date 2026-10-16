@@ -1,3 +1,5 @@
+# Optional local development only. Primary deployment is Azure Container Apps (P2).
+# deploy/install.sh is an optional on-prem path, not this file and not Container Apps.
 # Phase 1 stack. Presidio has no published ports. Caller TLS is localhost / VPN bind only.
 # Image tags are pinned to registry digests. Secrets are Docker secrets, not env files.
 

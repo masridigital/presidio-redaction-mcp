@@ -25,11 +25,18 @@ class RecognizerLogFilter(logging.Filter):
             if secret in redacted:
                 redacted = redacted.replace(secret, "<REDACTED>")
         spans = self.recognizers.find_spans(redacted)
-        if spans or "bearer " in redacted.lower() or "authorization" in redacted.lower() or redacted != message:
+        lowered_message = redacted.lower()
+        if (
+            spans
+            or "bearer " in lowered_message
+            or "authorization" in lowered_message
+            or "x-api-key" in lowered_message
+            or redacted != message
+        ):
             for span in sorted(spans, key=lambda item: item["start"], reverse=True):
                 redacted = redacted[: span["start"]] + "<REDACTED>" + redacted[span["end"] :]
             lowered = redacted.lower()
-            if "bearer " in lowered or "authorization" in lowered:
+            if "bearer " in lowered or "authorization" in lowered or "x-api-key" in lowered:
                 redacted = "redacted-credential-log"
             record.msg = redacted
             record.args = ()

@@ -27,6 +27,8 @@ Risk reduction for Yellow-lane tool data. Redaction is not HIPAA de-identificati
 
 Tool arguments cross Cloudflare **before** Presidio when the caller is Grok Bot. Callers must not put PHI in tool arguments. The proxy still scans them and, on the Cloudflare ingress, **blocks** the call when any entity is detected (it does not forward a masked copy). That does not undo the hop that already happened; `phi_in_cloudflare_tool_args` is an incident candidate. PHI-capable callers stay on the VPN listener. Their arguments are masked before the no-PHI upstreams see them. A valid token on the wrong listener is 401 and makes no upstream call.
 
+A tool result that Presidio flags is **blocked**, not masked, for a non-BAA caller (`phi_capable: false`). The caller receives `phi_in_non_baa_tool_result` and not the redacted body. That check is in the service on the default path and does not depend on the optional verifier. PHI-capable callers still receive the masked result when the verifier is off.
+
 VPN-only is the inbound path for local Claude and Open WebUI. This repo does not host Open WebUI and does not store chat history.
 
 ## Fail closed
@@ -34,6 +36,8 @@ VPN-only is the inbound path for local Claude and Open WebUI. This repo does not
 Any Presidio error, timeout, non-JSON body, HTTP error, truncated stream, or anonymizer no-op blocks the call. Inbound failure: the mock upstream is not called. Outbound failure: the result is discarded and is not returned. Binary, image, embedded file, unknown encoding, base64 that decodes to a detected identifier, an oversized payload, or a non-string scalar that matches a recognizer is blocked. Field allowlists run first and drop every other result field. Known-sensitive field names that remain are replaced regardless of score. Detections at or above the 0.4 threshold are masked; there is no pass band. Custom pattern scores are authored at 0.75 or higher so they are not ambiguous.
 
 Low-recall misses can still pass. That is the accepted residual risk, not a fail-open switch.
+
+The optional Claude verifier is a second pass on text Presidio has already returned. It is off by default. It runs only when `deployment.target` is `azure` and `deployment.baa` is true. A deployment target marked non-BAA, including Cloudflare, cannot enable it: config load and process start both refuse. When it is on, a Presidio hit, a Claude `phi` or `uncertain` verdict, a timeout, an error, a malformed body, an echo of the submitted text, or an instruction-like override blocks the call. Claude's body is untrusted and must match the verdict schema (offsets and entity types only). The call is `POST https://api.anthropic.com/v1/messages` with an allowlisted model, structured outputs, and no beta header, tools, files, batches, or web search. The API key comes from Azure Key Vault or a `0600` file. Audit rows for verifier decisions store an HMAC of the redacted text, never the text.
 
 ## Least privilege
 
@@ -45,7 +49,7 @@ Separate bearer tokens for Grok Bot, local Claude, and Open WebUI. Rotation targ
 
 ## Audit
 
-One row per call: timestamp, caller identity, ingress, whether that caller is PHI-capable, upstream, tool, keyed HMAC of the arguments (not an unsalted hash), entity counts, decision, reason code, latency, config hash. Config load writes a `config_change` row when the allowlist hash changes. No raw PHI, tokens, or argument text. Review cadence: Joseph weekly (fail-closed, Cloudflare PHI blocks, denied tools, entity-count spikes); monthly allowlist review; quarterly caller-token review. Retention: 6 years HIPAA documentation / 5 years NYDFS 500.6, at least 1 year searchable. See `docs/host-hardening.md`.
+One row per call: timestamp, caller identity, ingress, whether that caller is PHI-capable, upstream, tool, keyed HMAC of the arguments (not an unsalted hash), entity counts, decision, reason code, latency, config hash. When the verifier runs, a separate `verifier_decision` row stores the direction, verdict, entity-type counts, and an HMAC of the redacted text. Config load writes a `config_change` row when the allowlist hash changes. No raw PHI, tokens, argument text, or API key. Review cadence: Joseph weekly (fail-closed, Cloudflare PHI blocks, denied tools, entity-count spikes); monthly allowlist review; quarterly caller-token review. Retention: 6 years HIPAA documentation / 5 years NYDFS 500.6, at least 1 year searchable. See `docs/host-hardening.md`.
 
 ## Incident response
 
@@ -57,4 +61,4 @@ Synthetic fixtures only, seeded Faker (seed 4242), header `SYNTHETIC`. No real P
 
 ## Host
 
-Separate Ubuntu Server LTS VM. LUKS, UFW default-deny inbound and outbound, DOCKER-USER drop, unattended-upgrades, CIS L1-style baseline, encrypted 3-2-1 backups. Details in `docs/host-hardening.md` and `PLAN.md`.
+The primary deployment is Azure Container Apps under the Microsoft BAA. That path is the P2 lane. `deploy/install.sh` is an optional on-prem installer only (venv and systemd, no Docker). Host controls for that optional path are in `docs/host-hardening.md` and `docs/native-install.md`: LUKS, UFW default-deny inbound and outbound, unattended-upgrades, a CIS L1-style baseline, and encrypted 3-2-1 backups.

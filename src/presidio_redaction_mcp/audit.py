@@ -70,6 +70,43 @@ class AuditLog:
             }
         )
 
+    def record_verifier(
+        self,
+        *,
+        caller: str,
+        ingress: str,
+        upstream: str | None,
+        tool: str | None,
+        direction: str,
+        decision: str,
+        reason_code: str,
+        verdict: str | None,
+        entity_counts: dict[str, int],
+        input_hmac: str,
+        model: str | None,
+        latency_ms: float,
+        config_sha256: str,
+    ) -> None:
+        """Verifier decision. ``input_hmac`` covers the redacted text. The text is not stored."""
+        self._write(
+            {
+                "event": "verifier_decision",
+                "caller": caller,
+                "ingress": ingress,
+                "upstream": upstream,
+                "tool": tool,
+                "direction": direction,
+                "decision": decision,
+                "reason_code": reason_code,
+                "verdict": verdict,
+                "entity_counts": entity_counts,
+                "input_hmac": input_hmac,
+                "model": model,
+                "latency_ms": round(latency_ms, 3),
+                "config_sha256": config_sha256,
+            }
+        )
+
     def _write(self, row: dict[str, Any]) -> None:
         row["ts"] = datetime.now(UTC).isoformat()
         with self.path.open("a", encoding="utf-8") as handle:

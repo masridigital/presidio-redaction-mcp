@@ -1,8 +1,10 @@
 # Native install — venv and systemd
 
-Cap directive, 2026-10-15 23:26 ET: production is a native Ubuntu Server LTS install. Docker is not the production runtime. Each pip-installable app has its own virtualenv under `/opt/<app>`, its own non-login system user, and a hardened systemd unit. `docker-compose.yml` may stay in the repo for optional local development. It is not how this host is installed.
+This page is the optional on-prem path. The primary deployment is Azure Container Apps, which the P2 lane is adding. Do not treat `deploy/install.sh` as that deployment.
 
-`deploy/install.sh` and `deploy/systemd/presidio-redaction-mcp.service` on the merged Phase 1 tree still start Docker. Do not run that script for a production host. This runbook is the procedure. The installer and the Ansible role that mirrors it have to match these steps before either is used. Ansible does not get a second layout.
+Cap directive, 2026-10-15 23:26 ET, for the on-prem host: a native Ubuntu Server LTS install. Docker is not the runtime on that host. Each pip-installable app has its own virtualenv under `/opt/<app>`, its own non-login system user, and a hardened systemd unit. `docker-compose.yml` may stay in the repo for optional local development.
+
+`deploy/install.sh` is this optional procedure, and `deploy/ansible/roles/presidio_redaction_mcp` mirrors it. Neither installs Docker. Ansible does not get a second layout.
 
 This VM is the Yellow lane only. It does not run Open WebUI or LiteLLM. Those apps follow the same venv pattern on the Red-lane host.
 
@@ -71,6 +73,8 @@ PRM_AUDIT_STATE=/var/lib/presidio-redaction-mcp/audit/config-sha
 ```
 
 `PRM_VPN_BIND_HOST` is the VPN address on this host, not `0.0.0.0`. Tokens, the HMAC key, and TLS material are files in that directory, passed with systemd `LoadCredential=` so the service user reads them from the credential directory (`%d` in the unit). The unit sets `PRM_SECRET_FILE_<NAME>` and `PRM_TLS_CERT_FILE`, `PRM_TLS_KEY_FILE`, and `PRM_PRESIDIO_CA_FILE` to those credential paths. Do not put secret values in the env file. Do not use `/run/secrets`.
+
+The optional Claude verifier is off unless `verifier.enabled` is true and `deployment` is Azure marked BAA. Its API key is not a unit environment value. On Azure, set `PRM_KEY_VAULT_URL` and `PRM_KEY_VAULT_SECRET` in the non-secret env file and read the secret with the host managed identity. A 0600 file at `PRM_SECRET_FILE_ANTHROPIC_API_KEY` is the LoadCredential alternative: add that credential to the unit only when the file exists, mode `0600` or `0400`. A deployment target marked non-BAA cannot enable the verifier. The process refuses to start that configuration.
 
 ## systemd
 

@@ -3,6 +3,16 @@
 version: 1
 recognizers_file: recognizers.yaml
 max_payload_bytes: 262144
+# Azure under the Microsoft BAA is the only target that may enable the verifier.
+# verifier.enabled stays false until that deployment is reviewed.
+deployment:
+  target: azure
+  baa: true
+verifier:
+  enabled: false
+  model: claude-sonnet-4-5
+  timeout_seconds: 8
+  max_tokens: 256
 presidio:
   analyzer_url: https://presidio-tls/analyze
   anonymizer_url: https://presidio-tls/anonymize

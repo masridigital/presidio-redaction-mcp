@@ -2,20 +2,52 @@
 Description=Presidio redaction MCP proxy
 # presidio-analyzer is built from deploy/presidio/Dockerfile via compose.
 # mcr.microsoft.com/presidio-analyzer is deprecated and is not started.
-After=docker.service network-online.target cloudflared.service
+After=network-online.target presidio-analyzer.service presidio-anonymizer.service presidio-tls.service
 Wants=network-online.target
-Requires=docker.service
+Requires=presidio-analyzer.service presidio-anonymizer.service presidio-tls.service
 
 [Service]
 Type=simple
+User=presidio-proxy
+Group=presidio-proxy
 WorkingDirectory=/opt/presidio-redaction-mcp
-EnvironmentFile=/etc/presidio-redaction-mcp/compose.env
-ExecStart=/usr/bin/docker compose --env-file /etc/presidio-redaction-mcp/compose.env up --remove-orphans --abort-on-container-exit
-ExecStop=/usr/bin/docker compose --env-file /etc/presidio-redaction-mcp/compose.env down
+EnvironmentFile=/etc/presidio-redaction-mcp/presidio-redaction-mcp.env
+LoadCredential=tls_cert:/etc/presidio-redaction-mcp/tls_cert.pem
+LoadCredential=tls_key:/etc/presidio-redaction-mcp/tls_key.pem
+LoadCredential=internal_ca:/etc/presidio-redaction-mcp/internal_ca.pem
+LoadCredential=audit_hmac_key:/etc/presidio-redaction-mcp/audit_hmac_key
+LoadCredential=grok_bot_token:/etc/presidio-redaction-mcp/grok_bot_token
+LoadCredential=grok_cf_access_client_id:/etc/presidio-redaction-mcp/grok_cf_access_client_id
+LoadCredential=grok_cf_access_client_secret:/etc/presidio-redaction-mcp/grok_cf_access_client_secret
+LoadCredential=claude_local_token:/etc/presidio-redaction-mcp/claude_local_token
+LoadCredential=open_webui_token:/etc/presidio-redaction-mcp/open_webui_token
+Environment=PRM_TLS_CERT_FILE=%d/tls_cert
+Environment=PRM_TLS_KEY_FILE=%d/tls_key
+Environment=PRM_PRESIDIO_CA_FILE=%d/internal_ca
+Environment=PRM_SECRET_FILE_AUDIT_HMAC_KEY=%d/audit_hmac_key
+Environment=PRM_SECRET_FILE_GROK_BOT_TOKEN=%d/grok_bot_token
+Environment=PRM_SECRET_FILE_GROK_CF_ACCESS_CLIENT_ID=%d/grok_cf_access_client_id
+Environment=PRM_SECRET_FILE_GROK_CF_ACCESS_CLIENT_SECRET=%d/grok_cf_access_client_secret
+Environment=PRM_SECRET_FILE_CLAUDE_LOCAL_TOKEN=%d/claude_local_token
+Environment=PRM_SECRET_FILE_OPEN_WEBUI_TOKEN=%d/open_webui_token
+ExecStart=/opt/presidio-redaction-mcp/venv/bin/presidio-redaction-mcp
 Restart=on-failure
 RestartSec=5
-StandardOutput=journal
-StandardError=journal
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/presidio-redaction-mcp
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target

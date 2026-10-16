@@ -1,8 +1,8 @@
 # Host hardening — Ubuntu Server LTS
 
-This stack runs on its **own VM and VLAN**, not on the local-ai-stack host. The Cloudflare-exposed proxy must not be able to reach Red-lane Open WebUI, LiteLLM, or Postgres. Production install is native: venvs and systemd, as in `docs/native-install.md`. Cap's directive of 2026-10-15 23:26 ET is the standard. Docker is not the production runtime.
+The primary deployment is Azure Container Apps (P2). This page is the optional on-prem VM. That VM is its **own VLAN**, not the local-ai-stack host. The Cloudflare-exposed proxy must not be able to reach Red-lane Open WebUI, LiteLLM, or Postgres. The on-prem install is native: venvs and systemd, as in `docs/native-install.md`. Cap's directive of 2026-10-15 23:26 ET is the standard for that host. Docker is not the on-prem runtime.
 
-`deploy/install.sh` on the merged Phase 1 tree still installs Docker. Do not point it at a production host. Follow `docs/native-install.md` until that script and its Ansible mirror match the runbook.
+`deploy/install.sh` is the optional on-prem installer. It does not install Docker. The Ansible role mirrors it. `docker-compose.yml` is optional local development.
 
 ## LUKS
 
@@ -18,7 +18,7 @@ Keep the passphrase or key escrow separate from the VM backup set. Disposal of a
 
 Default deny incoming and default deny outgoing. The written allowlist is in `docs/native-install.md`. Inbound is loopback plus SSH from `PRM_MGMT_CIDR` only. The proxy listens on `127.0.0.1:8443` (cloudflared, outbound) and on the VPN address `:8444`. Presidio listens on `127.0.0.1` only. Nginx for `presidio-tls` listens on `127.0.0.1:443` only.
 
-Egress is per service user where the firewall can express it. Analyzer and anonymizer users stay on loopback. The proxy user does not get a general tcp/443 allow. cloudflared (apt) is the user that may open the tunnel. WireGuard (apt) may speak only to its configured peer.
+Egress is per service user where the firewall can express it. Analyzer and anonymizer users stay on loopback. The proxy user does not get a general tcp/443 allow. When the verifier is enabled, that user may open tcp/443 only to `api.anthropic.com` and `*.vault.azure.net`. Cloudflare hostnames stay denied. WireGuard (apt) may speak only to its configured peer.
 
 ## Unattended upgrades
 
@@ -51,4 +51,4 @@ restic or borg, encrypted, 3-2-1, with an immutable offsite copy. Back up config
 
 ## Secrets
 
-`/etc/presidio-redaction-mcp/*` mode `0600`, owner root, or systemd `LoadCredential=` from those files. Nothing secret is written into the repo, the unit, or the non-secret env file. The audit HMAC key is at least 32 bytes. cloudflared tunnel credentials get the same directory treatment.
+`/etc/presidio-redaction-mcp/*` mode `0600`, owner root, or systemd `LoadCredential=` from those files. Nothing secret is written into the repo, the unit, or the non-secret env file. The audit HMAC key is at least 32 bytes. The Anthropic API key, when the verifier is enabled, comes from Azure Key Vault via the host managed identity, or from a `0600`/`0400` file named by `PRM_SECRET_FILE_ANTHROPIC_API_KEY`. The vault URL is not a secret. The key is.
