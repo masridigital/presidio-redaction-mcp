@@ -1,0 +1,4 @@
+# Watch the proxy configuration and the audit log. Do not log request bodies.
+-w /etc/presidio-redaction-mcp -p wa -k presidio_config
+-w /etc/wireguard -p wa -k wireguard_config
+-w /var/lib/presidio-redaction-mcp/audit -p wa -k presidio_audit

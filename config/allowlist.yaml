@@ -14,10 +14,29 @@ verifier:
   timeout_seconds: 8
   max_tokens: 256
 presidio:
-  analyzer_url: https://presidio-tls/analyze
-  anonymizer_url: https://presidio-tls/anonymize
+  analyzer_url: https://127.0.0.1:5001/analyze
+  anonymizer_url: https://127.0.0.1:5002/anonymize
   timeout_seconds: 5
   score_threshold: 0.4
+listeners:
+  vpn_cidr: 10.8.0.0/24
+  cloudflare_allowed_hosts:
+    - 127.0.0.1
+    - 127.0.0.1:*
+    - localhost
+    - localhost:*
+  vpn_allowed_hosts:
+    - 10.8.0.1
+    - 10.8.0.1:*
+  access_issuer: https://configure-before-deploy.cloudflareaccess.com
+  access_audience: configure-before-deploy
+limits:
+  requests_per_minute: 120
+  max_depth: 6
+  max_nodes: 200
+  max_strings: 80
+  max_list_items: 20
+  max_presidio_calls: 400
 egress:
   # Phase 1 mocks do not dial the network. Real vendor hosts stay off this list
   # until their Cloudflare-proxy status is verified. .invalid cannot resolve.
@@ -25,27 +44,50 @@ egress:
     - stackjack.invalid
     - composio.invalid
   presidio_hosts:
-    - presidio-tls
-  test_hosts:
     - 127.0.0.1
+  test_hosts:
     - localhost
     - testserver
     - presidio.test
 callers:
   grok-bot:
     phi_capable: false
+    baa: false
     allowed_ingress:
       - cloudflare
     token_secret: grok_bot_token
     cf_access_client_id_secret: grok_cf_access_client_id
     cf_access_client_secret_secret: grok_cf_access_client_secret
+    allowed_tools:
+      - stackjack_health_check
+      - stackjack_get_service_status
+      - UPTIMEROBOT_GET_MONITORS
+    denied_result_fields:
+      - summary
+      - description
+      - text
+      - body
+      - url
+      - friendly_name
+      - date
+      - datetime
+      - created_at
+      - updated_at
+      - timestamp
+      - dob
+      - ip
+      - ip_address
+      - client_ip
   claude-local:
     phi_capable: true
+    baa: true
     allowed_ingress:
       - vpn
     token_secret: claude_local_token
   open-webui:
-    phi_capable: true
+    # Not cleared for PHI until local-ai-stack says otherwise.
+    phi_capable: false
+    baa: false
     allowed_ingress:
       - vpn
     token_secret: open_webui_token

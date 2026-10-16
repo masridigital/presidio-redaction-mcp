@@ -1,0 +1,4 @@
+---
+prm_mgmt_cidr: 10.8.0.0/24
+prm_vpn_bind_addr: 10.8.0.1
+prm_require_luks: "0"

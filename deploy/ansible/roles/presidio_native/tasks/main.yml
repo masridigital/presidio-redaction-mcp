@@ -1,0 +1,21 @@
+---
+# Mirrors host/install.sh. The script is the source of truth for package,
+# venv, systemd, UFW, and owner-egress steps so the role cannot drift.
+- name: Require Ubuntu
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == "Ubuntu"
+    fail_msg: This role installs the native Ubuntu Server LTS baseline.
+
+- name: Install the native stack
+  ansible.builtin.command:
+    argv:
+      - bash
+      - "{{ playbook_dir }}/../../host/install.sh"
+  args:
+    chdir: "{{ playbook_dir }}/../.."
+  environment:
+    PRM_MGMT_CIDR: "{{ prm_mgmt_cidr | default('10.8.0.0/24') }}"
+    PRM_VPN_BIND_ADDR: "{{ prm_vpn_bind_addr | default('10.8.0.1') }}"
+    PRM_REQUIRE_LUKS: "{{ prm_require_luks | default('0') }}"
+  changed_when: true

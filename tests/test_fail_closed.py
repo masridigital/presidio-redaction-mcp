@@ -23,7 +23,11 @@ SECRET = "MRN-SYN-0001234"
 # Reason codes the proxy can raise. The source scan below must match this set.
 COVERED = {
     "anthropic_key_missing",
+    "list_too_long",
+    "nesting_too_deep",
+    "payload_too_complex",
     "payload_too_large",
+    "presidio_fanout_exceeded",
     "pii_in_key",
     "presidio_anonymizer_ineffective",
     "presidio_flagged",

@@ -65,9 +65,44 @@ def test_01_inbound_args_are_masked_before_the_mock_upstream(stack):
     assert upstream.calls[0].base_url == "https://stackjack.invalid/mcp"
 
 
-def test_02_outbound_results_are_masked_before_the_caller(stack):
-    response = _vpn(stack, "stackjack_health_check", {"limit": 1})
-    text = tool_text(response)
+def test_02_outbound_results_are_masked_only_for_private_entra_phi(stack):
+    from presidio_redaction_mcp.auth import CallerIdentity
+
+    vpn_text = tool_text(_vpn(stack, "stackjack_health_check", {"limit": 1}))
+    for secret in CANONICAL_RESULT_SECRETS:
+        assert secret not in vpn_text
+    assert "<MRN>" in vpn_text
+    claude_id = "11111111-1111-4111-8111-111111111111"
+    stack["runtime"].service.settings.baa_client_ids = frozenset({claude_id})
+    outsider = CallerIdentity(
+        name="claude-local",
+        phi_capable=True,
+        ingress="private",
+        authn="entra",
+        client_id="44444444-4444-4444-8444-444444444444",
+    )
+    blocked_text = stack["vpn"].portal.call(
+        stack["runtime"].service.call_tool,
+        outsider,
+        "stackjack_health_check",
+        {"limit": 1},
+    )
+    assert "phi_in_non_baa_tool_result" in blocked_text
+    for secret in CANONICAL_RESULT_SECRETS:
+        assert secret not in blocked_text
+    identity = CallerIdentity(
+        name="claude-local",
+        phi_capable=True,
+        ingress="private",
+        authn="entra",
+        client_id=claude_id,
+    )
+    text = stack["vpn"].portal.call(
+        stack["runtime"].service.call_tool,
+        identity,
+        "stackjack_health_check",
+        {"limit": 1},
+    )
     for secret in CANONICAL_RESULT_SECRETS:
         assert secret not in text
     assert "<MRN>" in text
@@ -235,9 +270,11 @@ def test_07_audit_row_has_caller_and_no_raw_pii(stack):
     assert response.status_code == 200
     rows = stack["runtime"].audit.rows()
     assert any(row["event"] == "config_change" and row["caller"] == "process" for row in rows)
-    calls = [row for row in rows if row["event"] == "tool_call" and row["decision"] == "allow"]
+    calls = [row for row in rows if row["event"] == "tool_call"]
     assert calls
     row = calls[-1]
+    assert row["decision"] == "allow"
+    assert row["reason_code"] == "ok"
     assert row["caller"] == "claude-local"
     assert row["ingress"] == "vpn"
     assert row["phi_capable"] is True
@@ -310,7 +347,7 @@ def test_open_webui_is_vpn_only_and_grok_clean_call_is_allowed(stack):
         {"limit": 1},
     )
     assert webui.status_code == 200
-    assert "operational" in tool_text(webui) or "<" in tool_text(webui)
+    assert "phi_in_non_baa_tool_result" in tool_text(webui)
     grok_on_vpn = mcp_call(
         stack["vpn"],
         SECRETS["grok_bot_token"],
@@ -320,7 +357,15 @@ def test_open_webui_is_vpn_only_and_grok_clean_call_is_allowed(stack):
     assert grok_on_vpn.status_code == 401
     allowed = _grok(stack, "stackjack_health_check", {"limit": 1})
     assert allowed.status_code == 200
-    assert "MRN-SYN-0001234" not in tool_text(allowed)
+    rendered = tool_text(allowed)
+    assert "operational" in rendered
+    assert "phi_in_non_phi_tool_result" not in rendered
+    assert "MRN-SYN-0001234" not in rendered
+    assert "summary" not in rendered
+    denied = _grok(stack, "stackjack_search_docs", {"query": "status", "limit": 1})
+    assert "caller_tool_not_allowed" in tool_text(denied)
+    health = [call for call in stack["runtime"].upstreams["stackjack"].calls if call.tool == "stackjack_health_check"]
+    assert len(health) == 1
 
 
 def test_09_other_upstreams_wildcards_and_writes_fail_to_load(tmp_path, monkeypatch):
@@ -420,10 +465,13 @@ def test_recall_floors_on_synthetic_fixtures(stack):
     assert rewritten == negative
 
 
-def test_production_egress_is_the_two_upstreams_and_presidio_only(tmp_path, monkeypatch):
+def test_production_egress_is_the_two_upstreams_and_local_presidio_only(tmp_path, monkeypatch):
     monkeypatch.setenv("PRM_ENV", "production")
     for name, value in SECRETS.items():
-        monkeypatch.setenv(f"PRM_SECRET_{name.upper()}", value)
+        monkeypatch.delenv(f"PRM_SECRET_{name.upper()}", raising=False)
+        secret = tmp_path / name
+        secret.write_text(value + "\n", encoding="utf-8")
+        monkeypatch.setenv(f"PRM_SECRET_FILE_{name.upper()}", str(secret))
     cert = tmp_path / "cert.pem"
     key = tmp_path / "key.pem"
     ca = tmp_path / "ca.pem"
@@ -432,15 +480,23 @@ def test_production_egress_is_the_two_upstreams_and_presidio_only(tmp_path, monk
     monkeypatch.setenv("PRM_TLS_CERT_FILE", str(cert))
     monkeypatch.setenv("PRM_TLS_KEY_FILE", str(key))
     monkeypatch.setenv("PRM_PRESIDIO_CA_FILE", str(ca))
+    monkeypatch.setenv("PRM_ACCESS_ISSUER", "https://team.cloudflareaccess.com")
+    monkeypatch.setenv("PRM_ACCESS_AUDIENCE", "00112233445566778899aabbccddeeff")
+    jwks = tmp_path / "jwks.json"
+    jwks.write_text('{"keys":[{"kty":"RSA","kid":"prod","n":"aa","e":"AQAB"}]}', encoding="utf-8")
+    monkeypatch.setenv("PRM_ACCESS_JWKS_FILE", str(jwks))
     settings = load_settings(ROOT / "config" / "allowlist.yaml", env="production")
     assert settings.egress.allowed_hosts() == frozenset(
-        {"stackjack.invalid", "composio.invalid", "presidio-tls"}
+        {"stackjack.invalid", "composio.invalid", "127.0.0.1"}
     )
+    settings.egress.check("https://127.0.0.1:5001/analyze", purpose="presidio")
     with pytest.raises(PolicyError):
-        settings.egress.check("https://127.0.0.1/analyze", purpose="presidio")
+        settings.egress.check("https://127.0.0.1/analyze", purpose="upstream")
     with pytest.raises(PolicyError):
         settings.egress.check("https://api.github.com", purpose="upstream")
-    assert settings.allowlist.presidio.analyzer_url.startswith("https://")
+    assert "testserver" not in settings.allowlist.listeners.cloudflare_allowed_hosts
+    assert "testserver" not in settings.allowlist.listeners.vpn_allowed_hosts
+    assert settings.allowlist.presidio.analyzer_url.startswith("https://127.0.0.1")
 
 
 def test_day1_tool_list_is_exact():
@@ -456,6 +512,14 @@ def test_day1_tool_list_is_exact():
         "stackjack_get_doc_page",
     ]
     assert composio == ["UPTIMEROBOT_GET_MONITORS", "UPTIMEROBOT_GET_ACCOUNT_DETAILS"]
+    grok = raw["callers"]["grok-bot"]
+    assert set(grok["allowed_tools"]) == {
+        "stackjack_health_check",
+        "stackjack_get_service_status",
+        "UPTIMEROBOT_GET_MONITORS",
+    }
+    for field in ("summary", "date", "datetime", "ip", "ip_address", "text", "body"):
+        assert field in grok["denied_result_fields"]
     for tool in raw["upstreams"]["composio"]["tools"]:
         assert tool["toolkit"] == "UPTIMEROBOT"
         assert tool["connected_account_id"] == "ca_day1_uptimerobot_nonphi_ro"

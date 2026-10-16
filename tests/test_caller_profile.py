@@ -95,7 +95,7 @@ def test_cloudflare_phi_is_blocked_and_vpn_phi_is_masked(stack):
     rows = [row for row in stack["runtime"].audit.rows() if row["event"] == "tool_call"]
     assert rows[-1]["caller"] == "open-webui"
     assert rows[-1]["ingress"] == "vpn"
-    assert rows[-1]["phi_capable"] is True
+    assert rows[-1]["phi_capable"] is False
     grok_rows = [row for row in rows if row["reason_code"] == "phi_in_cloudflare_tool_args"]
     assert grok_rows[-1]["caller"] == "grok-bot"
     assert grok_rows[-1]["ingress"] == "cloudflare"

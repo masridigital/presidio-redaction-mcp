@@ -1,0 +1,15 @@
+[Unit]
+Description=WireGuard wg0 for PHI-capable callers
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/wireguard/wg0.conf
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=/bin/sh -c '! grep -q REPLACE_AT_INSTALL /etc/wireguard/wg0.conf'
+ExecStart=/usr/bin/wg-quick up wg0
+ExecStop=/usr/bin/wg-quick down wg0
+
+[Install]
+WantedBy=multi-user.target

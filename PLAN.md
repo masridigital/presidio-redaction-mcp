@@ -17,7 +17,7 @@ A remote MCP proxy that hosted assistants (Grok Bot — no BAA; Claude) call. It
 
 ## 3. Architecture
 ```
-grok-bot (no PHI) ──HTTPS──► Cloudflare Access + cloudflared ─► 127.0.0.1:8443
+grok-bot (no PHI) ──HTTPS──► Azure API Management + Entra (private) ─► Container Apps :8080
 claude-local / open-webui (PHI-capable) ──VPN only──► VPN address:8444
    ─► proxy /mcp (bearer per caller; Grok Bot also presents its CF service token)
         1. authN binds token → caller profile → allowed ingress (wrong door = 401, no upstream)
@@ -25,7 +25,7 @@ claude-local / open-webui (PHI-capable) ──VPN only──► VPN address:8444
         3. Presidio on args (any error/timeout/truncated stream ⇒ BLOCK, zero upstream calls)
            Cloudflare ingress: any detected entity ⇒ BLOCK (do not forward), audit phi_in_cloudflare_tool_args
            VPN ingress: forward only the masked args (upstreams are no-PHI)
-        4. forward only to stackjack.invalid or composio.invalid (Phase 1 mocks; never via cloudflared)
+        4. forward only to stackjack.invalid or composio.invalid (Phase 1 mocks)
         5. field allowlist, then Presidio on the result (failure ⇒ discard, caller gets a reason code only)
         6. audit: ts, caller, ingress, upstream, tool, keyed args HMAC, entity counts, decision, latency, config hash
 ```
@@ -54,7 +54,7 @@ claude-local / open-webui (PHI-capable) ──VPN only──► VPN address:8444
 5. Pagination/item cap enforced.
 6. Missing/invalid/wrong-assistant token ⇒ 401, no upstream call.
 7. Audit log row per call; contains no raw fixture PII.
-8. **Cloudflare egress = redacted only (no BAA):** capture all bytes leaving the proxy toward the tunnel side for the full fixture suite; assert zero raw synthetic PII/MRN/account values appear, and that upstream traffic never routes via cloudflared.
+8. **Non-PHI egress stays redacted:** capture bytes returned to grok-bot for the fixture suite and assert zero raw synthetic PII/MRN/account values. A result entity hit is blocked. grok-bot's tools and fields are scoped so a clean structured call can succeed.
 9. Config with any upstream other than `stackjack`/`composio` fails to load.
 10. Fixtures generated with seeded Faker, header `SYNTHETIC`; CI fails if any fixture lacks it.
 
@@ -65,7 +65,7 @@ claude-local / open-webui (PHI-capable) ──VPN only──► VPN address:8444
 - Tool args on the Cloudflare path are unredacted at the tunnel. Policy: callers never put PHI in tool args. PHI-capable callers are VPN-only. Grok Bot stays on the tunnel and is blocked when inbound entities are detected.
 - Upstream results may cross vendor-side Cloudflare. Unverified. Day-1 allowlist is non-PHI tools only; egress hosts are `.invalid` until that is verified.
 - Audit HMAC is keyed. Review cadence is weekly / monthly / quarterly as in SECURITY.md.
-- TLS is in Phase 1, not deferred. Official Presidio images only (`mcr.microsoft.com`), digest-pinned, unpublished, behind internal TLS.
+- TLS is in Phase 1, not deferred. The analyzer is the custom image in `deploy/presidio/Dockerfile`, not the MCR analyzer image. The anonymizer remains the digest-pinned MCR anonymizer image. Neither Presidio service publishes a port.
 - This VM is separate from local-ai-stack.
 - IR notes: `docs/incident-response.md`.
 
@@ -74,9 +74,9 @@ claude-local / open-webui (PHI-capable) ──VPN only──► VPN address:8444
 See `config/allowlist.yaml` for the pins. StackJack: `stackjack_health_check`, `stackjack_get_service_status`, `stackjack_list_advisories`, `stackjack_get_release_notes`, `stackjack_search_docs`, `stackjack_get_doc_page`. Composio toolkit `UPTIMEROBOT`, connected account `ca_day1_uptimerobot_nonphi_ro`: `UPTIMEROBOT_GET_MONITORS`, `UPTIMEROBOT_GET_ACCOUNT_DETAILS`. Rationale is on each tool. Expansions only via Marko review.
 
 ## Target host: Ubuntu Server LTS VM (Cap on-prem hypervisor), separate from local-ai-stack
-Deliverables in-repo: `docker compose` stack; `deploy/systemd/*.service` (compose up/down, Restart=on-failure, ordered after docker + cloudflared); `deploy/install.sh` (idempotent: packages, docker, user/group, dirs w/ 0700, secrets from env/vault, enable units); `docs/host-hardening.md` covering:
-- **LUKS** full-disk encryption at install (or LUKS data volume for /var/lib/docker + backups), key/passphrase escrow held separately.
-- **UFW** default deny incoming and outgoing; no inbound except SSH from the VPN/mgmt subnet; no outbound except loopback, DNS, and NTP until a reviewed allow names a real upstream host. Services are reached via cloudflared (outbound) or VPN. Docker published ports are limited to localhost and the VPN address, and `DOCKER-USER` drops other forwards. Presidio publishes no ports.
+Deliverables in-repo: native venvs under `/opt` (no Docker); `deploy/systemd/*.service` (Restart=on-failure, ProtectSystem=strict, empty CapabilityBoundingSet); `host/install.sh` (idempotent: packages, venvs, users, dirs mode 0700, secrets from root-only files or systemd credentials, enable units). `docker-compose.yml` is optional dev-only. See `deploy/NATIVE.md`.
+- **LUKS** full-disk encryption at install (or a LUKS volume for `/var/lib/presidio-redaction-mcp`, the Presidio data dirs, and backups), key/passphrase escrow held separately.
+- **UFW** (optional native VM only) default deny incoming and outgoing. Inbound SSH only from the VPN/mgmt subnet. WireGuard `wg0` is `10.8.0.1/24`; TCP 8444 is allowed only on `wg0`. The proxy and Presidio users have no routable egress. Azure Container Apps is the primary deployment.
 - **unattended-upgrades** for security updates + reboot window; monthly image updates.
 - **CIS-style hardening** (Ubuntu CIS L1 baseline): SSH keys only/no root, auditd, AppArmor, minimal packages, time sync, sysctl hardening, docker daemon (no TCP socket, userns-remap/rootless where feasible, live-restore, log limits).
 - **Log retention**: journald + docker logs rotated locally; audit logs shipped to SIEM, retained 6y (HIPAA) / 5y (NYDFS).

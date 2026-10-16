@@ -1,4 +1,4 @@
-"""Serve the Cloudflare listener and the VPN listener over TLS."""
+"""Serve the Azure private listener, or the lab listeners when Entra mode is off."""
 
 from __future__ import annotations
 
@@ -16,30 +16,50 @@ from presidio_redaction_mcp.logging_setup import configure_logging
 
 
 def main() -> None:
-    config_path = Path(os.environ.get("PRM_CONFIG", "/app/config/allowlist.yaml"))
+    config_path = Path(os.environ.get("PRM_CONFIG", "/etc/presidio-redaction-mcp/allowlist.yaml"))
     settings = load_settings(config_path)
     configure_logging(settings.recognizers, os.environ.get("LOG_LEVEL", "INFO"), settings.secret_values)
     audit = AuditLog(
         Path(os.environ.get("PRM_AUDIT_PATH", "/var/lib/presidio-redaction-mcp/audit/audit.jsonl")),
         Path(os.environ.get("PRM_AUDIT_STATE", "/var/lib/presidio-redaction-mcp/audit/config-sha")),
+        settings.audit_hmac_key,
+        forward=settings.audit_forward,
     )
     api_key = resolve_verifier_key(settings) if settings.allowlist.verifier.enabled else None
     runtime = build_runtime(settings, audit, anthropic_api_key=api_key)
+    if settings.auth_mode == "entra":
+        _serve_azure(runtime.private_app)
+        return
+    _serve_lab(runtime, settings)
+
+
+def _serve_azure(app: object) -> None:
+    if app is None or os.environ.get("PRM_AZURE_INTERNAL") != "1":
+        raise SystemExit(1)
+    bind_host = os.environ.get("PRM_BIND_HOST", "0.0.0.0")  # nosec B104
+    port = int(os.environ.get("PRM_PORT", "8080"))
+    if bind_host in {"", "::"}:
+        raise SystemExit(1)
+    uvicorn.run(app, host=bind_host, port=port, access_log=False, log_level="info")  # type: ignore[arg-type]
+
+
+def _serve_lab(runtime: object, settings: object) -> None:
     bind_host = os.environ.get("PRM_BIND_HOST", "127.0.0.1")
-    vpn_host = os.environ.get("PRM_VPN_BIND_HOST", bind_host)
+    vpn_host = os.environ.get("PRM_VPN_BIND_HOST", "10.8.0.1")
     cf_port = int(os.environ.get("PRM_CF_PORT", "8443"))
     vpn_port = int(os.environ.get("PRM_VPN_PORT", "8444"))
-    ssl_kwargs = {
-        "ssl_certfile": settings.tls_cert_file,
-        "ssl_keyfile": settings.tls_key_file,
-    }
-    if settings.env == "production" and (not settings.tls_cert_file or not settings.tls_key_file):
+    if bind_host not in {"127.0.0.1", "::1"} or vpn_host in {"0.0.0.0", "::", ""}:  # nosec B104
+        raise SystemExit(1)
+    tls_cert = getattr(settings, "tls_cert_file", None)
+    tls_key = getattr(settings, "tls_key_file", None)
+    ssl_kwargs = {"ssl_certfile": tls_cert, "ssl_keyfile": tls_key}
+    if getattr(settings, "env", "") == "production" and (not tls_cert or not tls_key):
         raise SystemExit(1)
 
     async def serve() -> None:
         cf_server = uvicorn.Server(
             uvicorn.Config(
-                runtime.cloudflare_app,
+                runtime.cloudflare_app,  # type: ignore[attr-defined]
                 host=bind_host,
                 port=cf_port,
                 log_level="info",
@@ -49,7 +69,7 @@ def main() -> None:
         )
         vpn_server = uvicorn.Server(
             uvicorn.Config(
-                runtime.vpn_app,
+                runtime.vpn_app,  # type: ignore[attr-defined]
                 host=vpn_host,
                 port=vpn_port,
                 log_level="info",

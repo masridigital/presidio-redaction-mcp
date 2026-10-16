@@ -45,7 +45,7 @@ Default deny. Read-only. No bulk export. Pagination caps (`max_items` ≤ 20). F
 
 ## Auth and TLS
 
-Separate bearer tokens for Grok Bot, local Claude, and Open WebUI. Rotation target remains 90 days and is a Phase 4 exposure gate, not a Phase 1 gap that may be ignored at exposure time. Constant-time compare. Cloudflare Access service token is bound to the Grok Bot profile. TLS from Phase 1 on both listeners, and TLS from the proxy to Presidio via the internal nginx sidecar. Certificates are Docker secrets. Presidio images are official `mcr.microsoft.com/presidio-analyzer` and `presidio-anonymizer` at 2.2.362, pinned by digest, with no published ports.
+Separate bearer tokens for Grok Bot, local Claude, and Open WebUI. Rotation target remains 90 days and is a Phase 4 exposure gate, not a Phase 1 gap that may be ignored at exposure time. Constant-time compare. Cloudflare Access service token is bound to the Grok Bot profile. TLS from Phase 1 on both listeners, and TLS from the proxy to Presidio via the internal nginx sidecar. Certificates are Docker secrets on the optional compose path. The analyzer is the custom image in `deploy/presidio/Dockerfile`. The anonymizer image is `mcr.microsoft.com/presidio-anonymizer` at 2.2.362, pinned by digest, with no published ports.
 
 ## Audit
 

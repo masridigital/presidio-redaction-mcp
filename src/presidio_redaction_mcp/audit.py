@@ -1,23 +1,40 @@
-"""Structured audit log. Payloads, tokens, and raw identifiers are not written."""
+"""Hash-chained audit log. Payloads, tokens, and raw identifiers are not written."""
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
+import syslog
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+_GENESIS = "0" * 64
+
 
 class AuditLog:
-    def __init__(self, path: Path, state_path: Path) -> None:
+    def __init__(
+        self,
+        path: Path,
+        state_path: Path,
+        hmac_key: bytes,
+        *,
+        forward: str | None = None,
+    ) -> None:
+        if forward is not None and forward != "syslog" and not forward.startswith("file:"):
+            raise ValueError("audit_forward_invalid")
         self.path = path
         self.state_path = state_path
+        self.hmac_key = hmac_key
+        self.forward = forward
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.path.exists():
             self.path.chmod(0o600)
         else:
             self.path.touch(mode=0o600)
             self.path.chmod(0o600)
+        self._prev = self._tail_hash()
 
     def note_config(self, config_sha256: str) -> None:
         previous = None
@@ -52,10 +69,11 @@ class AuditLog:
         reason_code: str,
         latency_ms: float,
         config_sha256: str,
+        event: str = "tool_call",
     ) -> None:
         self._write(
             {
-                "event": "tool_call",
+                "event": event,
                 "caller": caller,
                 "ingress": ingress,
                 "phi_capable": phi_capable,
@@ -107,17 +125,66 @@ class AuditLog:
             }
         )
 
+    def verify(self) -> bool:
+        previous = _GENESIS
+        for line in self._lines():
+            row = json.loads(line)
+            row_hash = row.pop("row_hash", "")
+            if row.get("prev_hash") != previous:
+                return False
+            body = json.dumps(row, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            expected = hmac.new(self.hmac_key, body, hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(expected, str(row_hash)):
+                return False
+            previous = str(row_hash)
+        return True
+
     def _write(self, row: dict[str, Any]) -> None:
         row["ts"] = datetime.now(UTC).isoformat()
+        row["prev_hash"] = self._prev
+        body = json.dumps(row, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        row_hash = hmac.new(self.hmac_key, body, hashlib.sha256).hexdigest()
+        row["row_hash"] = row_hash
+        line = json.dumps(row, sort_keys=True, separators=(",", ":"))
         with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n")
+            handle.write(line + "\n")
         self.path.chmod(0o600)
+        self._prev = row_hash
+        self._forward(line)
+
+    def _forward(self, line: str) -> None:
+        if not self.forward:
+            return
+        if self.forward == "syslog":
+            syslog.openlog("presidio-redaction-mcp", syslog.LOG_PID, syslog.LOG_AUTH)
+            syslog.syslog(syslog.LOG_INFO, line)
+            return
+        destination = Path(self.forward.removeprefix("file:"))
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+        destination.chmod(0o600)
 
     def rows(self) -> list[dict[str, Any]]:
+        rows = []
+        for line in self._lines():
+            rows.append(json.loads(line))
+        return rows
+
+    def _lines(self) -> list[str]:
         if not self.path.exists():
             return []
-        rows = []
-        for line in self.path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                rows.append(json.loads(line))
-        return rows
+        return [line for line in self.path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    def _tail_hash(self) -> str:
+        lines = self._lines()
+        if not lines:
+            return _GENESIS
+        try:
+            row = json.loads(lines[-1])
+        except json.JSONDecodeError:
+            return _GENESIS
+        value = row.get("row_hash")
+        if isinstance(value, str) and len(value) == 64:
+            return value
+        return _GENESIS

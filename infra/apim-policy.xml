@@ -1,0 +1,46 @@
+<!--
+  API Management is the OAuth front. The container re-validates the same JWT.
+  Issuers are the pinned tenant v2 endpoint only. common, organizations, and
+  consumers are not accepted. Named values are parameters, not secret material.
+-->
+<policies>
+  <inbound>
+    <base />
+    <validate-azure-ad-token tenant-id="{{entra-tenant-id}}" header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="invalid_token">
+      <client-application-ids>
+        <application-id>{{claude-client-id}}</application-id>
+        <application-id>{{open-webui-client-id}}</application-id>
+        <application-id>{{grok-client-id}}</application-id>
+      </client-application-ids>
+      <audiences>
+        <audience>{{entra-audience}}</audience>
+      </audiences>
+      <required-claims>
+        <claim name="ver" match="all">
+          <value>2.0</value>
+        </claim>
+      </required-claims>
+    </validate-azure-ad-token>
+    <validate-jwt header-name="Authorization" failed-validation-httpcode="401" require-expiration-time="true" require-scheme="Bearer" require-signed-tokens="true">
+      <openid-config url="https://login.microsoftonline.com/{{entra-tenant-id}}/v2.0/.well-known/openid-configuration" />
+      <audiences>
+        <audience>{{entra-audience}}</audience>
+      </audiences>
+      <issuers>
+        <issuer>https://login.microsoftonline.com/{{entra-tenant-id}}/v2.0</issuer>
+      </issuers>
+    </validate-jwt>
+    <set-header name="X-MS-CLIENT-PRINCIPAL" exists-action="delete" />
+    <set-header name="X-APIM-CLIENT-ID" exists-action="delete" />
+    <set-header name="Cf-Access-Jwt-Assertion" exists-action="delete" />
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>

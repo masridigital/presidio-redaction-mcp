@@ -53,10 +53,17 @@ def test_presidio_lock_pins_the_engine_and_spacy_model():
 def test_direct_pins_match_pyproject():
     project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     runtime = (ROOT / "requirements.in").read_text(encoding="utf-8")
-    for pin in ("httpx==0.28.1", "mcp==1.30.0", "pydantic==2.14.1", "pyyaml==6.0.3", "uvicorn==0.54.0"):
+    for pin in (
+        "httpx==0.28.1",
+        "mcp==1.30.0",
+        "pydantic==2.14.1",
+        "PyJWT==2.15.1",
+        "pyyaml==6.0.3",
+        "uvicorn==0.54.0",
+    ):
         assert pin in project
         assert pin in runtime
-        assert pin.split("==")[0] in _lock_text("requirements.txt")
+        assert pin.split("==")[0].lower() in _lock_text("requirements.txt").lower()
 
 
 def test_workflow_pins_actions_hashes_and_checksums():
@@ -71,3 +78,16 @@ def test_workflow_pins_actions_hashes_and_checksums():
     assert 'pytest -m "not native"' in workflow
     assert "pytest -m native" in workflow
     assert "PRM_REQUIRE_NATIVE" in workflow
+
+
+def test_analyzer_is_the_custom_image_not_mcr():
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    dockerfile = (ROOT / "deploy" / "presidio" / "Dockerfile").read_text(encoding="utf-8")
+    security = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+    plan = (ROOT / "PLAN.md").read_text(encoding="utf-8")
+    assert "mcr.microsoft.com/presidio-analyzer" not in dockerfile
+    assert "mcr.microsoft.com/presidio-analyzer:" not in compose
+    assert "deploy/presidio/Dockerfile" in compose
+    assert "mcr.microsoft.com/presidio-analyzer" not in security
+    assert "mcr.microsoft.com/presidio-analyzer" not in plan
+    assert "register_us_recognizers" in (ROOT / "deploy" / "presidio" / "serve.py").read_text(encoding="utf-8")

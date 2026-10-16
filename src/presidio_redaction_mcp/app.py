@@ -20,6 +20,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from presidio_redaction_mcp.audit import AuditLog
 from presidio_redaction_mcp.auth import CallerIdentity, authenticate
 from presidio_redaction_mcp.config import Settings, ToolSpec
+from presidio_redaction_mcp.entra import EntraTokenVerifier, protected_resource_metadata
 from presidio_redaction_mcp.errors import AuthError
 from presidio_redaction_mcp.service import RedactionService
 
@@ -33,14 +34,20 @@ def create_app(
     audit: AuditLog,
     service: RedactionService,
     allowed_hosts: list[str],
+    entra: EntraTokenVerifier | None = None,
 ) -> Starlette:
     mcp_server = Server("presidio-redaction-mcp")
     tools = _tool_models(settings)
 
     @mcp_server.list_tools()
     async def list_tools() -> list[types.Tool]:
-        if caller_var.get() is None:
+        caller = caller_var.get()
+        if caller is None:
             return []
+        spec = settings.allowlist.callers.get(caller.name)
+        if spec is not None and spec.allowed_tools:
+            allowed = set(spec.allowed_tools)
+            return [tool for tool in tools if tool.name in allowed]
         return tools
 
     @mcp_server.call_tool(validate_input=False)
@@ -53,7 +60,7 @@ def create_app(
                 isError=True,
             )
         text = await service.call_tool(caller, name, arguments)
-        is_error = json.loads(text).get("error") == "blocked"
+        is_error = _is_blocked_payload(text)
         return types.CallToolResult(
             content=[types.TextContent(type="text", text=text)],
             isError=is_error,
@@ -83,18 +90,22 @@ def create_app(
         settings=settings,
         ingress=ingress,
         audit=audit,
+        entra=entra,
     )
 
     async def health(_: Any) -> JSONResponse:
         return JSONResponse({"status": "ok"})
 
-    return Starlette(
-        routes=[
-            Route("/healthz", health, methods=["GET"]),
-            Mount("/mcp", app=protected),
-        ],
-        lifespan=lifespan,
-    )
+    async def metadata(_: Any) -> JSONResponse:
+        return JSONResponse(protected_resource_metadata(resource=settings.entra_audience or "presidio-redaction-mcp"))
+
+    routes: list[Any] = [
+        Route("/healthz", health, methods=["GET"]),
+        Mount("/mcp", app=protected),
+    ]
+    if ingress == "private":
+        routes.insert(0, Route("/.well-known/oauth-protected-resource", metadata, methods=["GET"]))
+    return Starlette(routes=routes, lifespan=lifespan)
 
 
 class _SessionApp:
@@ -106,50 +117,83 @@ class _SessionApp:
 
 
 class _IngressAuth:
-    def __init__(self, app: ASGIApp, *, settings: Settings, ingress: str, audit: AuditLog) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        settings: Settings,
+        ingress: str,
+        audit: AuditLog,
+        entra: EntraTokenVerifier | None,
+    ) -> None:
         self.app = app
         self.settings = settings
         self.ingress = ingress
         self.audit = audit
+        self.entra = entra
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
         headers = {key.decode("latin-1").lower(): value.decode("latin-1") for key, value in scope.get("headers", [])}
+        private = self.ingress == "private"
         try:
             caller = authenticate(
                 self.settings.callers,
                 ingress=self.ingress,
                 authorization=headers.get("authorization"),
-                cf_client_id=headers.get("cf-access-client-id"),
-                cf_client_secret=headers.get("cf-access-client-secret"),
+                cf_client_id=None if private else headers.get("cf-access-client-id"),
+                cf_client_secret=None if private else headers.get("cf-access-client-secret"),
+                entra=self.entra if private else None,
             )
         except AuthError as exc:
-            self.audit.record(
-                caller="unknown",
-                ingress=self.ingress,
-                phi_capable=None,
-                upstream=None,
-                tool=None,
-                args_hmac=None,
-                entity_counts={},
-                decision="deny",
-                reason_code=exc.reason_code,
-                latency_ms=0,
-                config_sha256=self.settings.config_sha256,
-            )
+            self._audit_auth(caller="unknown", phi_capable=None, decision="deny", reason=exc.reason_code)
             response = JSONResponse(
                 {"error": "unauthorized", "reason_code": exc.reason_code},
                 status_code=401,
             )
             await response(scope, receive, send)
             return
+        if private:
+            self._audit_auth(
+                caller=caller.name,
+                phi_capable=caller.phi_capable,
+                decision="allow",
+                reason="auth_ok",
+            )
         token = caller_var.set(caller)
         try:
             await self.app(scope, receive, send)
         finally:
             caller_var.reset(token)
+
+    def _audit_auth(self, *, caller: str, phi_capable: bool | None, decision: str, reason: str) -> None:
+        self.audit.record(
+            caller=caller,
+            ingress=self.ingress,
+            phi_capable=phi_capable,
+            upstream=None,
+            tool=None,
+            args_hmac=None,
+            entity_counts={},
+            decision=decision,
+            reason_code=reason,
+            latency_ms=0,
+            config_sha256=self.settings.config_sha256,
+            event="auth",
+        )
+
+
+def _is_blocked_payload(text: str) -> bool:
+    """A JSON list is a successful tool result. Only an object with error=blocked is an error."""
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return True
+    if not isinstance(parsed, dict):
+        return False
+    return parsed.get("error") == "blocked"
 
 
 def _tool_models(settings: Settings) -> list[types.Tool]:

@@ -14,7 +14,7 @@ from presidio_redaction_mcp.auth import CallerIdentity
 from presidio_redaction_mcp.config import Settings, ToolSpec, tool_index
 from presidio_redaction_mcp.egress import EgressPolicy
 from presidio_redaction_mcp.errors import FailClosed, PolicyError
-from presidio_redaction_mcp.redact import Redactor, count_items, filter_fields
+from presidio_redaction_mcp.redact import Redactor, count_items, drop_denied_fields, filter_fields
 from presidio_redaction_mcp.upstream import MockUpstream
 from presidio_redaction_mcp.verifier import ClaudeVerifier
 
@@ -71,11 +71,49 @@ class RedactionService:
         self.rate_limiter = rate_limiter or RateLimiter()
         self.verifier = verifier
         self._tools = tool_index(settings)
+        self._hits: dict[str, list[float]] = {}
 
     async def call_tool(self, caller: CallerIdentity, name: str, arguments: dict[str, Any] | None) -> str:
         started = time.perf_counter()
+        try:
+            return await self._call_tool(caller, name, arguments, started)
+        except Exception:
+            try:
+                self._audit(
+                    caller,
+                    upstream=None,
+                    tool=None,
+                    args_hmac=_args_hmac(self.settings.audit_hmac_key, arguments or {}),
+                    counts={},
+                    decision="block",
+                    reason="internal_error",
+                    started=started,
+                )
+            except Exception:
+                return _error("internal_error")
+            return _error("internal_error")
+
+    async def _call_tool(
+        self,
+        caller: CallerIdentity,
+        name: str,
+        arguments: dict[str, Any] | None,
+        started: float,
+    ) -> str:
         arguments = arguments or {}
         args_hmac = _args_hmac(self.settings.audit_hmac_key, arguments)
+        if not self._allow_rate(caller.name):
+            self._audit(
+                caller,
+                upstream=None,
+                tool=None,
+                args_hmac=args_hmac,
+                counts={},
+                decision="deny",
+                reason="rate_limited",
+                started=started,
+            )
+            return _error("rate_limited")
         located = self._tools.get(name)
         try:
             self.rate_limiter.check(caller.name)
@@ -177,6 +215,20 @@ class RedactionService:
             )
             return _error("phi_in_cloudflare_tool_args")
 
+        spec = self.settings.allowlist.callers.get(caller.name)
+        if spec is None or (spec.allowed_tools and name not in spec.allowed_tools):
+            self._audit(
+                caller,
+                upstream=upstream_name,
+                tool=name,
+                args_hmac=args_hmac,
+                counts=arg_counts,
+                decision="deny",
+                reason="caller_tool_not_allowed",
+                started=started,
+            )
+            return _error("caller_tool_not_allowed")
+
         upstream = self.upstreams[upstream_name]
         redacted_args = scrub_secrets(redacted_args, self.settings.secret_values)
         try:
@@ -222,6 +274,8 @@ class RedactionService:
 
         try:
             filtered = filter_fields(raw_result, set(tool.allowed_result_fields))
+            if spec.denied_result_fields and _result_is_non_baa(caller, self.settings.baa_client_ids):
+                filtered = drop_denied_fields(filtered, set(spec.denied_result_fields))
             redacted_result, result_counts = await self.redactor.redact(filtered)
         except FailClosed as exc:
             self._audit(
@@ -236,9 +290,11 @@ class RedactionService:
             )
             return _error(exc.reason_code)
 
-        # Non-BAA callers never receive a masked result. This runs on the default
-        # path and does not depend on the optional verifier.
-        if not caller.phi_capable and _sensitive(result_counts):
+        # Entity hits are blocked for non-BAA callers. phi_capable alone is not enough:
+        # Cloudflare ingress always blocks, and an Entra client id off the BAA
+        # allowlist blocks even when the caller profile says it is PHI-capable.
+        # This runs on the default path and does not depend on the optional verifier.
+        if _sensitive(result_counts) and _result_is_non_baa(caller, self.settings.baa_client_ids):
             self._audit(
                 caller,
                 upstream=upstream_name,
@@ -342,6 +398,17 @@ class RedactionService:
             config_sha256=self.settings.config_sha256,
         )
 
+    def _allow_rate(self, caller: str) -> bool:
+        limit = self.settings.allowlist.limits.requests_per_minute
+        now = time.monotonic()
+        window = [stamp for stamp in self._hits.get(caller, []) if now - stamp < 60]
+        if len(window) >= limit:
+            self._hits[caller] = window
+            return False
+        window.append(now)
+        self._hits[caller] = window
+        return True
+
     async def _second_pass(
         self,
         caller: CallerIdentity,
@@ -412,6 +479,21 @@ def _error(reason_code: str) -> str:
 
 def _sensitive(counts: dict[str, int]) -> bool:
     return any(count > 0 for count in counts.values())
+
+
+def _result_is_non_baa(caller: CallerIdentity, baa_client_ids: frozenset[str]) -> bool:
+    """True when a masked PHI result must not be returned.
+
+    Cloudflare ingress is never a BAA path. Under APIM the Entra client id
+    (azp/appid) must be on the BAA allowlist. phi_capable is not sufficient.
+    """
+    if caller.ingress == "cloudflare":
+        return True
+    if caller.authn == "entra":
+        client_id = (caller.client_id or "").lower()
+        if client_id not in baa_client_ids:
+            return True
+    return not caller.phi_capable
 
 
 def strip_instructions(value: Any) -> Any:
