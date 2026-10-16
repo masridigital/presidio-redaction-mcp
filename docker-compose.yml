@@ -1,0 +1,140 @@
+# Phase 1 stack. Presidio has no published ports. Caller TLS is localhost / VPN bind only.
+# Image tags are pinned to registry digests. Secrets are Docker secrets, not env files.
+
+name: presidio-redaction-mcp
+
+services:
+  proxy:
+    build:
+      context: .
+    image: presidio-redaction-mcp:phase1
+    read_only: true
+    user: "65532:65532"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      PRM_ENV: production
+      LOG_LEVEL: INFO
+      PRM_CONFIG: /app/config/allowlist.yaml
+      PRM_BIND_HOST: 0.0.0.0
+      PRM_VPN_BIND_HOST: 0.0.0.0
+      PRM_TLS_CERT_FILE: /run/secrets/tls_cert
+      PRM_TLS_KEY_FILE: /run/secrets/tls_key
+      PRM_PRESIDIO_CA_FILE: /run/secrets/internal_ca
+      PRM_AUDIT_PATH: /var/lib/presidio-redaction-mcp/audit/audit.jsonl
+      PRM_AUDIT_STATE: /var/lib/presidio-redaction-mcp/audit/config-sha
+    ports:
+      - "127.0.0.1:8443:8443"
+      - "${PRM_VPN_BIND_ADDR:-10.8.0.1}:8444:8444"
+    networks:
+      - edge
+      - presidio_internal
+    secrets:
+      - tls_cert
+      - tls_key
+      - internal_ca
+      - audit_hmac_key
+      - grok_bot_token
+      - grok_cf_access_client_id
+      - grok_cf_access_client_secret
+      - claude_local_token
+      - open_webui_token
+    volumes:
+      - audit:/var/lib/presidio-redaction-mcp/audit
+    tmpfs:
+      - /tmp
+    depends_on:
+      - presidio-tls
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  presidio-analyzer:
+    image: mcr.microsoft.com/presidio-analyzer:2.2.362@sha256:286e3fa7f3a7426e775e8564fe1870f1ba8f999d3ab8bbb8cc46a44355d9d6e9
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - presidio_internal
+    tmpfs:
+      - /tmp
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  presidio-anonymizer:
+    image: mcr.microsoft.com/presidio-anonymizer:2.2.362@sha256:a10a12a2a613d13cf29d3ad3641e3258444dd8c90403dd644a0a114c472c2483
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - presidio_internal
+    tmpfs:
+      - /tmp
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  presidio-tls:
+    image: nginx:1.28-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - presidio_internal
+    volumes:
+      - ./deploy/nginx/presidio-tls.conf:/etc/nginx/nginx.conf:ro
+    secrets:
+      - internal_tls_cert
+      - internal_tls_key
+    tmpfs:
+      - /tmp
+    depends_on:
+      - presidio-analyzer
+      - presidio-anonymizer
+
+networks:
+  presidio_internal:
+    internal: true
+  edge: {}
+
+volumes:
+  audit:
+
+secrets:
+  tls_cert:
+    file: ${PRM_TLS_CERT_FILE_PATH:-./secrets/tls_cert.pem}
+  tls_key:
+    file: ${PRM_TLS_KEY_FILE_PATH:-./secrets/tls_key.pem}
+  internal_ca:
+    file: ${PRM_INTERNAL_CA_FILE_PATH:-./secrets/internal_ca.pem}
+  internal_tls_cert:
+    file: ${PRM_INTERNAL_TLS_CERT_FILE_PATH:-./secrets/internal_tls_cert.pem}
+  internal_tls_key:
+    file: ${PRM_INTERNAL_TLS_KEY_FILE_PATH:-./secrets/internal_tls_key.pem}
+  audit_hmac_key:
+    file: ${PRM_AUDIT_HMAC_KEY_FILE:-./secrets/audit_hmac_key}
+  grok_bot_token:
+    file: ${PRM_GROK_BOT_TOKEN_FILE:-./secrets/grok_bot_token}
+  grok_cf_access_client_id:
+    file: ${PRM_GROK_CF_ACCESS_CLIENT_ID_FILE:-./secrets/grok_cf_access_client_id}
+  grok_cf_access_client_secret:
+    file: ${PRM_GROK_CF_ACCESS_CLIENT_SECRET_FILE:-./secrets/grok_cf_access_client_secret}
+  claude_local_token:
+    file: ${PRM_CLAUDE_LOCAL_TOKEN_FILE:-./secrets/claude_local_token}
+  open_webui_token:
+    file: ${PRM_OPEN_WEBUI_TOKEN_FILE:-./secrets/open_webui_token}

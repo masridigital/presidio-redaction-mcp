@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "presidio-redaction-mcp"
+version = "0.1.0"
+description = "Fail-closed Presidio redaction proxy for StackJack and Composio MCP tools."
+readme = "PLAN.md"
+requires-python = ">=3.12"
+dependencies = [
+  "httpx==0.28.1",
+  "mcp==1.30.0",
+  "pydantic==2.14.1",
+  "pyyaml==6.0.3",
+  "uvicorn==0.54.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "bandit==1.9.4",
+  "cyclonedx-bom==7.2.1",
+  "faker==37.12.0",
+  "pip-audit==2.10.0",
+  "pytest==9.0.3",
+  "pytest-asyncio==1.4.0",
+]
+
+[project.scripts]
+presidio-redaction-mcp = "presidio_redaction_mcp.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = [
+  "error",
+  "ignore:Using `httpx` with `starlette.testclient`:DeprecationWarning",
+  "ignore:Using `httpx` with `starlette.testclient`:starlette.exceptions.StarletteDeprecationWarning",
+]
+
+[tool.bandit]
+exclude_dirs = ["tests"]
+skips = ["B101"]

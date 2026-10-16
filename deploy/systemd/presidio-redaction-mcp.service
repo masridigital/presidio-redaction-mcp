@@ -1,0 +1,19 @@
+[Unit]
+Description=Presidio redaction MCP proxy
+After=docker.service network-online.target cloudflared.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/presidio-redaction-mcp
+EnvironmentFile=/etc/presidio-redaction-mcp/compose.env
+ExecStart=/usr/bin/docker compose --env-file /etc/presidio-redaction-mcp/compose.env up --remove-orphans --abort-on-container-exit
+ExecStop=/usr/bin/docker compose --env-file /etc/presidio-redaction-mcp/compose.env down
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
