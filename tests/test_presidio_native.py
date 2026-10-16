@@ -220,12 +220,8 @@ def test_builtin_gaps_are_caught_by_ad_hoc_recognizers(engines):
         assert case["value"] not in rendered, case
 
 
-@pytest.mark.native
-def test_default_engine_npi_class_catches_a_checksum_specimen(engines):
-    from presidio_analyzer.predefined_recognizers import UsNpiRecognizer
-
-    engine, _anonymizer = engines
-    assert "US_NPI" not in engine.get_supported_entities("en")
+def _checksum_npi() -> str:
+    """One Luhn specimen. Not written into fixtures."""
     body = "100000002"
     for digit in "0123456789":
         candidate = body + digit
@@ -239,14 +235,62 @@ def test_default_engine_npi_class_catches_a_checksum_specimen(engines):
                     value -= 9
             total += value
         if total % 10 == 0:
-            break
-    else:
-        raise AssertionError("no checksum specimen")
+            return candidate
+    raise AssertionError("no checksum specimen")
+
+
+@pytest.mark.native
+def test_default_engine_omits_us_npi_and_serve_registers_it(engines):
+    import importlib.util
+
+    from presidio_analyzer.predefined_recognizers import UsNpiRecognizer
+
+    engine, _anonymizer = engines
+    assert "US_NPI" not in engine.get_supported_entities("en")
+    assert "US_MBI" not in engine.get_supported_entities("en")
+    candidate = _checksum_npi()
     text = f"provider {candidate}"
     hits = UsNpiRecognizer().analyze(text=text, entities=["US_NPI"])
     assert any(text[hit.start : hit.end] == candidate for hit in hits)
     default_hits = engine.analyze(text=text, language="en", score_threshold=0.4)
     assert not any(hit.entity_type == "US_NPI" for hit in default_hits)
+
+    path = ROOT / "deploy" / "presidio" / "serve.py"
+    spec = importlib.util.spec_from_file_location("prm_presidio_serve", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    served = module._engine("analyzer", nlp_engine=engine.nlp_engine)
+    supported = set(served.get_supported_entities("en"))
+    assert {"US_NPI", "US_MBI", "US_SSN", "US_BANK_NUMBER", "US_ITIN", "US_PASSPORT", "US_DRIVER_LICENSE"} <= supported
+    served_hits = served.analyze(text=text, language="en", score_threshold=0.4)
+    assert any(hit.entity_type == "US_NPI" and text[hit.start : hit.end] == candidate for hit in served_hits)
+    assert sum(1 for item in served.registry.recognizers if item.__class__.__name__ == "UsNpiRecognizer") == 1
+
+
+@pytest.mark.native
+def test_double_agrees_with_presidio_on_ip_and_dob(engines):
+    import json as json_module
+
+    from tests.presidio_double import PresidioDouble
+
+    engine, _anonymizer = engines
+    double = PresidioDouble()
+    samples = [
+        ("from 192.0.2.10 today", "IP_ADDRESS", "192.0.2.10"),
+        ("dob 1900-01-01", "DATE_TIME", "1900-01-01"),
+        ("dob 1901-02-02", "DATE_TIME", "1901-02-02"),
+    ]
+    for text, entity, value in samples:
+        request = httpx.Request(
+            "POST",
+            "http://presidio.test/analyze",
+            json={"text": text, "language": "en", "score_threshold": 0.4, "ad_hoc_recognizers": []},
+        )
+        doubled = json_module.loads(double.handle(request).read().decode())
+        assert any(item["entity_type"] == entity and text[item["start"] : item["end"]] == value for item in doubled)
+        live = engine.analyze(text=text, language="en", score_threshold=0.4)
+        assert _span_hit(live, text, entity, value), (entity, value)
 
 
 @pytest.mark.native

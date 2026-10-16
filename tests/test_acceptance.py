@@ -415,7 +415,7 @@ def test_recall_floors_on_synthetic_fixtures(stack):
             continue
         recall = sum(results) / len(results)
         assert recall >= floors["adversarial_floor"], entity
-    negative = "ticket #24058 version v1.2.3 from 192.0.2.10 in Q3 2026"
+    negative = "ticket #24058 version v1.2.3 in Q3 2026"
     rewritten, _counts = _redact(negative)
     assert rewritten == negative
 
