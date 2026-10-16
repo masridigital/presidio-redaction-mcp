@@ -52,8 +52,8 @@ Upstream requests do not leave through cloudflared. The tunnel is ingress for th
 ## Enforcement
 
 - Startup rejects a config outside this scope (`allowlist_rejected`).
-- Presidio runs on arguments and on results and fails closed, including a truncated stream. Images are the official `mcr.microsoft.com/presidio-analyzer` and `presidio-anonymizer` at 2.2.362, digest-pinned in `docker-compose.yml`, with no published ports.
-- Host egress is default-deny. See `docs/host-hardening.md`.
+- Presidio runs on arguments and on results and fails closed, including a truncated stream. Analyzer and anonymizer are pip installs in their own venvs, `presidio-analyzer[server]==2.2.362` and `presidio-anonymizer[server]==2.2.362`, with spaCy `3.8.16` and `en_core_web_lg` `3.8.0`, installed with `pip --require-hashes`. They listen on `127.0.0.1` only. The unit and the pins are in `docs/native-install.md`.
+- Host egress is default-deny, per service user where the firewall can express it. See `docs/host-hardening.md`.
 
 ## Changes
 

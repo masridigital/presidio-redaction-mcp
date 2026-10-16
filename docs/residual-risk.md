@@ -22,6 +22,7 @@ Fail-closed behavior is a separate control, not this acceptance. Analyzer or ano
 - PHI-capable callers (`claude-local`, `open-webui`) use the VPN listener only. Arguments are masked before a no-PHI upstream is called. A token on the wrong listener is 401 and makes no upstream call.
 - StackJack and Composio have no BAAs. Cap's decision is the written no-PHI scope in `docs/upstream-scope-policy.md`. Day-1 tools are non-PHI. PHI in a result is redacted and is an incident candidate. It is not a reason to add a PHI tool, and it is not a prompt to request a BAA.
 - There is no fallback to an unredacted tool. If this stack is down, users go to the Green lane only.
+- Production is the venv and systemd install in `docs/native-install.md`. A container is not the runtime that this acceptance relies on.
 
 ## Risks that are not accepted
 

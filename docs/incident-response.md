@@ -50,7 +50,7 @@ When the event is a notification event involving customer information of at leas
 3. Preserve the audit log and the config hash. The ticket gets timestamps, caller profile, ingress, upstream, tool name, and reason code. It does not get argument text or result bodies.
 4. If the miss came from a recognizer gap, disable the tool in `config/allowlist.yaml` through `docs/allowlist-change-process.md` rather than loosening Presidio. The next start must write a `config_change` row.
 5. Fallback for users is the Green lane only until the stack is trusted again.
-6. Stop the host unit only when fail-closed is not holding: `systemctl stop presidio-redaction-mcp` (the unit's stop runs `docker compose down`). Restart is `systemctl restart presidio-redaction-mcp` after the cause is fixed and the synthetic suite has been re-run.
+6. Stop the proxy only when fail-closed is not holding: `systemctl stop presidio-redaction-mcp`. That stops the venv process. Stop `presidio-analyzer`, `presidio-anonymizer`, and `presidio-tls` as well when the miss is on the Presidio hop. Restart, after the cause is fixed and the synthetic suite has been re-run, is `systemctl restart presidio-analyzer presidio-anonymizer presidio-tls presidio-redaction-mcp`. There is no compose project to bring down. Unit layout is in `docs/native-install.md`.
 
 ## Afterward
 

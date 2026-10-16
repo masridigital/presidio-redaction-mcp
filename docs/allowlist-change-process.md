@@ -1,6 +1,6 @@
 # Allowlist change process
 
-`config/allowlist.yaml` is how the no-PHI upstream scope is enforced. Changing it changes which data can leave the proxy. Marko reviews every change before merge. The current security review of this lane is NO-GO for merge and deploy until a later review clears it. Enterprise change control is POL-CHG-001. This file is the repo procedure that feeds it.
+`config/allowlist.yaml` is how the no-PHI upstream scope is enforced. Changing it changes which data can leave the proxy. Marko reviews every change before it is installed on a host. Enterprise change control is POL-CHG-001. This file is the repo procedure that feeds it. Production install is the venv and systemd layout in `docs/native-install.md`.
 
 ## What needs this process
 
@@ -24,7 +24,7 @@ Removing or disabling a tool during an incident uses the same record: a reviewed
    - The diff adds no wildcard and no path that sends PHI to a party without a BAA, or that moves a PHI-capable caller onto the tunnel.
    - Egress hosts stay on pins whose path has been reviewed. Unverified vendor Cloudflare paths stay off the list.
    - `config/recall-floors.yaml` still passes on the synthetic corpus.
-4. Merge follows that approval. Deploy stays closed while the security review is NO-GO. The host unit, when a later review allows install, is `deploy/systemd/presidio-redaction-mcp.service`, installed by `deploy/install.sh`.
+4. Merge follows that approval. Install on the host is `systemctl restart presidio-redaction-mcp` after the reviewed file is in `/opt/presidio-redaction-mcp/config/`. The process is the venv console script, not a container. A Presidio, spaCy, or model pin change uses the same review and the hashed requirements files in `docs/native-install.md`.
 5. The next process start writes a `config_change` audit row when the allowlist hash changes. The row carries the config hash and no argument or result text. A production allowlist that changed without that row is an incident.
 
 ## Record
