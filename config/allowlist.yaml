@@ -1,6 +1,8 @@
 # Day-1 allowlist. Default deny. Exactly stackjack and composio.
 # Expansions require a Marko review and a new Cap decision.
 version: 1
+# Production and Entra mode refuse to start unless PRM_CONFIG_STORE is set.
+require_published_config: true
 recognizers_file: recognizers.yaml
 max_payload_bytes: 262144
 # Azure under the Microsoft BAA is the only target that may enable the verifier.

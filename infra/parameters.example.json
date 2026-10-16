@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "value": "eastus"
+    },
+    "namePrefix": {
+      "value": "prmadmin"
+    },
+    "entraTenantId": {
+      "value": "f7812296-5bce-41dc-8102-b1b270e7c4c7"
+    },
+    "entraClientId": {
+      "value": "00000000-0000-4000-8000-000000000000"
+    },
+    "acrsValue": {
+      "value": "c1"
+    },
+    "infraSubnetId": {
+      "value": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/example/providers/Microsoft.Network/virtualNetworks/example/subnets/aca-infra"
+    },
+    "privateEndpointSubnetId": {
+      "value": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/example/providers/Microsoft.Network/virtualNetworks/example/subnets/private-endpoints"
+    },
+    "keyVaultDnsZoneId": {
+      "value": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/example/providers/Microsoft.Network/privateDnsZones/privatelink.vaultcore.azure.net"
+    },
+    "blobDnsZoneId": {
+      "value": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/example/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"
+    },
+    "containerImage": {
+      "value": "example.azurecr.io/prm-admin:latest"
+    },
+    "deployerPrincipalId": {
+      "value": "00000000-0000-4000-8000-000000000001"
+    },
+    "deployerPrincipalType": {
+      "value": "User"
+    },
+    "storeHmacKey": {
+      "value": "replace-with-vault-store-hmac-key-32b"
+    },
+    "auditHmacKey": {
+      "value": "replace-with-vault-audit-hmac-key-32b"
+    },
+    "sessionHmacKey": {
+      "value": "replace-with-vault-session-hmac-key-32"
+    },
+    "publishToVnet": {
+      "value": true
+    }
+  }
+}

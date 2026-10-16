@@ -308,6 +308,7 @@ class AllowlistFile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: Literal[1]
+    require_published_config: bool = False
     upstreams: dict[str, UpstreamSpec]
     callers: dict[str, CallerSpec]
     presidio: PresidioSpec
@@ -390,6 +391,18 @@ class Settings(BaseModel):
     entra_audience: str = ""
     entra_clients: tuple[Any, ...] = ()
     baa_client_ids: frozenset[str] = frozenset()
+    published_version_id: int | None = None
+    published_sha256: str = ""
+
+
+def assert_published_store(settings: Settings, store_dir: str | None) -> None:
+    """Production and Entra mode refuse to start on the static allowlist alone."""
+    if not settings.allowlist.require_published_config:
+        return
+    if settings.env != "production" and settings.auth_mode != "entra":
+        return
+    if not store_dir:
+        raise ConfigError("published_config_required")
 
 
 def assert_verifier_permitted(source: Settings | AllowlistFile) -> None:

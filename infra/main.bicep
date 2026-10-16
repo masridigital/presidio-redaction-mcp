@@ -22,6 +22,17 @@ param openWebUiClientId string
 @description('Pre-registered Grok Bot application id. NonPhi.Caller only.')
 param grokClientId string
 
+@description('Blob URL of the published admin config. Required when require_published_config is true.')
+param configStoreUrl string
+
+@secure()
+@description('Store HMAC key. Distinct from the audit and session keys. Not a storage account key.')
+param storeHmacKey string
+
+@secure()
+@description('Admin audit-chain HMAC key. The proxy uses it to verify the published hash.')
+param adminAuditHmacKey string
+
 @description('Digest-pinned proxy image. A floating tag is not accepted.')
 param containerImage string
 
@@ -373,6 +384,16 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           identity: 'system'
         }
       ]
+      secrets: [
+        {
+          name: 'store-hmac-key'
+          value: storeHmacKey
+        }
+        {
+          name: 'admin-audit-hmac-key'
+          value: adminAuditHmacKey
+        }
+      ]
       ingress: {
         external: false
         targetPort: 8080
@@ -429,6 +450,18 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'PRM_ENTRA_CLIENT_GROK'
               value: grokClientId
+            }
+            {
+              name: 'PRM_CONFIG_STORE'
+              value: configStoreUrl
+            }
+            {
+              name: 'PRM_STORE_HMAC_KEY'
+              secretRef: 'store-hmac-key'
+            }
+            {
+              name: 'PRM_ADMIN_AUDIT_HMAC_KEY'
+              secretRef: 'admin-audit-hmac-key'
             }
           ]
         }

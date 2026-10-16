@@ -30,14 +30,15 @@ dev = [
 
 [project.scripts]
 presidio-redaction-mcp = "presidio_redaction_mcp.__main__:main"
+presidio-admin = "presidio_admin.__main__:main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["src", "admin"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
-pythonpath = ["."]
+testpaths = ["tests", "admin/tests"]
+pythonpath = [".", "admin"]
 markers = [
   "native: real Presidio 2.2.362 and the pinned en_core_web_lg model",
 ]

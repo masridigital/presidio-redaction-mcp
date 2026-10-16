@@ -24,7 +24,7 @@ jobs:
       - name: Pytest
         run: pytest -m "not native"
       - name: SAST
-        run: bandit -r src -ll -q
+        run: bandit -r src admin/presidio_admin -ll -q
       - name: Dependency scan
         run: pip-audit -r requirements.txt -r requirements-dev.txt
       - name: SBOM

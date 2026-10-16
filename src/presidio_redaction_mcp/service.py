@@ -63,6 +63,7 @@ class RedactionService:
         upstreams: dict[str, MockUpstream],
         rate_limiter: RateLimiter | None = None,
         verifier: ClaudeVerifier | None = None,
+        published_tools: frozenset[str] | None = None,
     ) -> None:
         self.settings = settings
         self.audit = audit
@@ -72,6 +73,7 @@ class RedactionService:
         self.verifier = verifier
         self._tools = tool_index(settings)
         self._hits: dict[str, list[float]] = {}
+        self._published_tools = published_tools
 
     async def call_tool(self, caller: CallerIdentity, name: str, arguments: dict[str, Any] | None) -> str:
         started = time.perf_counter()
@@ -129,7 +131,8 @@ class RedactionService:
                 started=started,
             )
             return _error(exc.reason_code)
-        if located is None:
+        published_block = self._published_tools is not None and name not in self._published_tools
+        if located is None or published_block:
             # Do not write the caller-supplied name. It is untrusted and may itself be an identifier.
             self._audit(
                 caller,
