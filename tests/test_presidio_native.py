@@ -239,10 +239,19 @@ def _checksum_npi() -> str:
     raise AssertionError("no checksum specimen")
 
 
+def _serve_module():
+    import sys
+
+    deploy = str(ROOT / "deploy")
+    if deploy not in sys.path:
+        sys.path.append(deploy)
+    import presidio.serve as serve
+
+    return serve
+
+
 @pytest.mark.native
 def test_default_engine_omits_us_npi_and_serve_registers_it(engines):
-    import importlib.util
-
     from presidio_analyzer.predefined_recognizers import UsNpiRecognizer
 
     engine, _anonymizer = engines
@@ -255,17 +264,39 @@ def test_default_engine_omits_us_npi_and_serve_registers_it(engines):
     default_hits = engine.analyze(text=text, language="en", score_threshold=0.4)
     assert not any(hit.entity_type == "US_NPI" for hit in default_hits)
 
-    path = ROOT / "deploy" / "presidio" / "serve.py"
-    spec = importlib.util.spec_from_file_location("prm_presidio_serve", path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    served = module._engine("analyzer", nlp_engine=engine.nlp_engine)
+    served = _serve_module().build_analyzer(nlp_engine=engine.nlp_engine)
     supported = set(served.get_supported_entities("en"))
     assert {"US_NPI", "US_MBI", "US_SSN", "US_BANK_NUMBER", "US_ITIN", "US_PASSPORT", "US_DRIVER_LICENSE"} <= supported
     served_hits = served.analyze(text=text, language="en", score_threshold=0.4)
     assert any(hit.entity_type == "US_NPI" and text[hit.start : hit.end] == candidate for hit in served_hits)
     assert sum(1 for item in served.registry.recognizers if item.__class__.__name__ == "UsNpiRecognizer") == 1
+
+
+@pytest.mark.native
+def test_analyze_http_returns_us_npi(engines):
+    engine, _anonymizer = engines
+    candidate = _checksum_npi()
+    text = f"provider {candidate}"
+    server = _serve_module().serve_in_thread(_serve_module().build_analyzer(nlp_engine=engine.nlp_engine))
+    try:
+        host, port = server.server_address
+        base = f"http://{host}:{port}"
+        health = httpx.get(f"{base}/health", timeout=10)
+        assert health.status_code == 200
+        assert health.json()["status"] == "ok"
+        response = httpx.post(
+            f"{base}/analyze",
+            json={"text": text, "language": "en", "score_threshold": 0.4},
+            timeout=60,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert any(
+            item["entity_type"] == "US_NPI" and text[item["start"] : item["end"]] == candidate for item in body
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 @pytest.mark.native

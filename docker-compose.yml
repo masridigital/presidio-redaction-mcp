@@ -53,9 +53,19 @@ services:
         max-size: 10m
         max-file: "5"
 
+  # mcr.microsoft.com/presidio-analyzer is deprecated and is not pulled.
+  # This service is the custom image: hashed requirements, serve.py, US_NPI registered.
   presidio-analyzer:
-    image: mcr.microsoft.com/presidio-analyzer:2.2.362@sha256:286e3fa7f3a7426e775e8564fe1870f1ba8f999d3ab8bbb8cc46a44355d9d6e9
+    build:
+      context: .
+      dockerfile: deploy/presidio/Dockerfile
+    image: presidio-analyzer:2.2.362
     read_only: true
+    user: "65532:65532"
+    environment:
+      PRESIDIO_BIND: 0.0.0.0
+      PRESIDIO_PORT: "3000"
+      PRESIDIO_SPACY_MODEL: en_core_web_lg
     cap_drop:
       - ALL
     security_opt:
@@ -70,6 +80,7 @@ services:
         max-size: 10m
         max-file: "3"
 
+  # Anonymizer is still the digest-pinned MCR image. The analyzer MCR image is not.
   presidio-anonymizer:
     image: mcr.microsoft.com/presidio-anonymizer:2.2.362@sha256:a10a12a2a613d13cf29d3ad3641e3258444dd8c90403dd644a0a114c472c2483
     read_only: true
