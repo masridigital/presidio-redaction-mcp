@@ -48,3 +48,14 @@ Config: `allowlist.yaml` with exactly two upstream keys (`stackjack`, `composio`
 8. **Cloudflare egress = redacted only (no BAA):** capture all bytes leaving the proxy toward the tunnel side for the full fixture suite; assert zero raw synthetic PII/MRN/account values appear, and that upstream traffic never routes via cloudflared.
 9. Config with any upstream other than `stackjack`/`composio` fails to load.
 10. Fixtures generated with seeded Faker, header `SYNTHETIC`; CI fails if any fixture lacks it.
+
+## Target host: Ubuntu Server LTS VM (Cap on-prem hypervisor)
+Deliverables in-repo: `docker compose` stack; `deploy/systemd/*.service` (compose up/down, Restart=on-failure, ordered after docker + cloudflared); `deploy/install.sh` (idempotent: packages, docker, user/group, dirs w/ 0700, secrets from env/vault, enable units); `docs/host-hardening.md` covering:
+- **LUKS** full-disk encryption at install (or LUKS data volume for /var/lib/docker + backups), key/passphrase escrow held separately.
+- **UFW** default deny incoming; no inbound except SSH from VPN/mgmt subnet; services reachable only via cloudflared (outbound) or VPN.
+- **unattended-upgrades** for security updates + reboot window; monthly image updates.
+- **CIS-style hardening** (Ubuntu CIS L1 baseline): SSH keys only/no root, auditd, AppArmor, minimal packages, time sync, sysctl hardening, docker daemon (no TCP socket, userns-remap/rootless where feasible, live-restore, log limits).
+- **Log retention**: journald + docker logs rotated locally; audit logs shipped to SIEM, retained 6y (HIPAA) / 5y (NYDFS).
+- **Encrypted backups**: restic/borg encrypted, 3-2-1 with immutable offsite copy, quarterly restore test.
+Acceptance: install.sh shellcheck clean and idempotent in CI (Ubuntu LTS container/VM); UFW rules test asserts no listening inbound ports beyond allowed.
+

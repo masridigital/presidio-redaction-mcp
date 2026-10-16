@@ -10,3 +10,4 @@
 - **Test data:** synthetic only; no real PHI, client, or Lumina data.
 - **Change control:** Marko security review before any merge/deploy/exposure.
 - **Reporting:** report vulnerabilities privately to Joseph Masri.
+- **Host:** Ubuntu Server LTS VM; LUKS, UFW default-deny inbound, unattended-upgrades, CIS L1-style hardening, encrypted backups (see PLAN.md).
