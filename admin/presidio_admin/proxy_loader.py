@@ -1,4 +1,8 @@
-"""What the proxy calls. A missing, tampered, or unsigned document fails closed."""
+"""What the proxy calls. A missing, tampered, or unsigned document fails closed.
+
+The verifier must not be able to sign. After a good load the proxy advances
+the version floor, which the store writer cannot lower.
+"""
 
 from __future__ import annotations
 
@@ -8,29 +12,32 @@ from typing import Any, Callable
 
 from presidio_admin.documents import imds_token
 from presidio_admin.errors import ConfigRejected
+from presidio_admin.floor import NullFloor
+from presidio_admin.signing import ConfigSigner
 from presidio_admin.store import ConfigStore, VersionRecord
 
 
 def load_for_proxy(
     store_dir: Path | str,
     *,
-    store_key: bytes,
-    audit_key: bytes,
+    verifier: ConfigSigner,
+    floor: Any = None,
     token_provider: Callable[[], str] | None = None,
 ) -> VersionRecord:
-    if len(store_key) < 32 or len(audit_key) < 32:
-        raise ConfigRejected("hmac_key_too_short")
-    if store_key == audit_key:
-        raise ConfigRejected("hmac_keys_must_differ")
+    if verifier.allow_sign:
+        raise ConfigRejected("sign_not_permitted")
+    mark = floor or NullFloor()
     location = str(store_dir)
     if location.startswith("https://"):
         provider: Any = token_provider if token_provider is not None else _blob_token_provider()
-        store = ConfigStore.open(location, store_key=store_key, audit_key=audit_key, token_provider=provider)
+        store = ConfigStore.open(location, signer=verifier, token_provider=provider, floor=mark)
     else:
         if not (Path(location) / "active.json").is_file():
             raise ConfigRejected("published_config_missing")
-        store = ConfigStore(Path(location), store_key=store_key, audit_key=audit_key)
-    return store.verify_for_proxy()
+        store = ConfigStore(Path(location), signer=verifier, floor=mark)
+    record = store.verify_for_proxy()
+    mark.advance(record.version_id, record.sha256)
+    return record
 
 
 def _blob_token_provider() -> Callable[[], str]:

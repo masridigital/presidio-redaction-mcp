@@ -19,13 +19,14 @@ The Admin who proposes a risky change cannot approve it. Tightening a control (d
 
 ## Run locally
 
-Use synthetic values only. The process refuses an HMAC key shorter than 32 bytes and refuses a value that still says `replace-with`.
+Use synthetic values only. Production refuses a store HMAC, an admin-audit HMAC, a session key in the environment, and a private key file. Locally the portal signs with a PEM and the session key is a 32-byte value that does not say `replace-with`.
 
 ```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out /tmp/prm-signing.pem
+openssl rsa -in /tmp/prm-signing.pem -pubout -out /tmp/prm-signing.pub
 export PRM_ENV=test
 export PRM_ADMIN_BIND=127.0.0.1
-export PRM_STORE_HMAC_KEY="$(python -c 'print("s"*32)')"
-export PRM_ADMIN_AUDIT_HMAC_KEY="$(python -c 'print("a"*32)')"
+export PRM_SIGNING_KEY_FILE=/tmp/prm-signing.pem
 export PRM_ADMIN_SESSION_HMAC_KEY="$(python -c 'print("e"*32)')"
 export PRM_ADMIN_CLIENT_ID=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
 export PRM_ADMIN_JWKS_FILE=/path/to/synthetic-jwks.json
@@ -33,7 +34,7 @@ export PRM_CONFIG_STORE=/tmp/prm-admin-store
 python -m presidio_admin
 ```
 
-The three keys must differ, and they must differ from `PRM_SECRET_AUDIT_HMAC_KEY`. Token exchange uses `PRM_ADMIN_ASSERTION=managed_identity` or `certificate`. There is no client secret. A session goes idle after 15 minutes and the cookie requires `nbf`.
+Token exchange uses `PRM_ADMIN_ASSERTION=managed_identity` or `certificate`. There is no client secret. A session goes idle after 15 minutes and the cookie requires `nbf`. In Azure the signing key and the session secret are generated in Key Vault. See `docs/signing-key-rotation.md`.
 
 The approvals page shows the metadata diff, the base hash, and the proposed hash. The `Admin` role is a group of named accounts reviewed every quarter. A sealed break-glass account alerts Chief and Cap on use and does not skip approval. See `docs/best-practices-compliance.md`.
 
@@ -43,7 +44,7 @@ Sign-in redirects to `https://login.microsoftonline.com/f7812296-5bce-41dc-8102-
 
 ## Proxy
 
-Set `PRM_CONFIG_STORE` to the same directory, or to `https://<account>.blob.core.windows.net/prm-config`. Production and Entra mode refuse to start when that variable is unset (`require_published_config: true`). The proxy verifies the store signature with `PRM_STORE_HMAC_KEY`, verifies the admin audit chain with `PRM_ADMIN_AUDIT_HMAC_KEY`, and exits if the active version is missing, rolled back, or not anchored on the chain. Startup and `/healthz` log the version id and hash. Published tool toggles, the verifier switch, and the PHI client mapping are enforced. They cannot add a tool the allowlist does not already name.
+Set `PRM_CONFIG_STORE` to the same directory, or to `https://<account>.blob.core.windows.net/prm-config`. `require_published_config` defaults on. Production forces the store even when the file says false, and Entra mode requires it while the flag stays on. The proxy verifies with `PRM_SIGNING_PUBLIC_KEY_FILE` locally, or with `PRM_SIGNING_KEY_URL` in Azure. A private key on the proxy is refused. Production and Entra mode also require `PRM_VERSION_FLOOR`, a path or container the store writer cannot change. A local floor file must sit outside the store directory. The proxy exits if the active version is missing, rolled back, below the floor, or not anchored on the chain. Startup and `/healthz` log the version id and hash. Published tool toggles, the verifier switch, and the PHI client mapping are enforced. Flipping a client from NonPHI to PHI waits for a second Admin. They cannot add a tool the allowlist does not already name.
 
 One replica writes the store. The writer takes a lease and an ETag. Do not scale the portal past one replica until that lease is the only writer.
 

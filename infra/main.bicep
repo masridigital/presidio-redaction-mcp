@@ -25,13 +25,11 @@ param grokClientId string
 @description('Blob URL of the published admin config. Required when require_published_config is true.')
 param configStoreUrl string
 
-@secure()
-@description('Store HMAC key. Distinct from the audit and session keys. Not a storage account key.')
-param storeHmacKey string
+@description('Key Vault key URL. The proxy verifies with this key and cannot sign.')
+param signingKeyUrl string
 
-@secure()
-@description('Admin audit-chain HMAC key. The proxy uses it to verify the published hash.')
-param adminAuditHmacKey string
+@description('Append-blob container for the version floor. Not the config container.')
+param versionFloorUrl string
 
 @description('Digest-pinned proxy image. A floating tag is not accepted.')
 param containerImage string
@@ -384,16 +382,6 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           identity: 'system'
         }
       ]
-      secrets: [
-        {
-          name: 'store-hmac-key'
-          value: storeHmacKey
-        }
-        {
-          name: 'admin-audit-hmac-key'
-          value: adminAuditHmacKey
-        }
-      ]
       ingress: {
         external: false
         targetPort: 8080
@@ -456,12 +444,12 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
               value: configStoreUrl
             }
             {
-              name: 'PRM_STORE_HMAC_KEY'
-              secretRef: 'store-hmac-key'
+              name: 'PRM_SIGNING_KEY_URL'
+              value: signingKeyUrl
             }
             {
-              name: 'PRM_ADMIN_AUDIT_HMAC_KEY'
-              secretRef: 'admin-audit-hmac-key'
+              name: 'PRM_VERSION_FLOOR'
+              value: versionFloorUrl
             }
           ]
         }

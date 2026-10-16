@@ -15,8 +15,9 @@ from typing import Any
 from presidio_admin.audit_view import AuditChain
 from presidio_admin.documents import AzureBlobDocuments, LocalDocuments
 from presidio_admin.errors import ConfigRejected
+from presidio_admin.floor import NullFloor, floor_separated
 from presidio_admin.schema import PortalConfig, parse_config
-from presidio_admin.signing import sign_document, signature_ok
+from presidio_admin.signing import ConfigSigner, sign_document, signature_ok
 
 _GUID = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
@@ -58,35 +59,33 @@ class ConfigStore:
         self,
         root: Path,
         *,
-        store_key: bytes,
-        audit_key: bytes,
+        signer: ConfigSigner,
         documents: LocalDocuments | AzureBlobDocuments | None = None,
+        floor: Any = None,
+        store_location: str | None = None,
     ) -> None:
-        if len(store_key) < 32 or len(audit_key) < 32:
-            raise ConfigRejected("hmac_key_too_short")
-        if store_key == audit_key:
-            raise ConfigRejected("hmac_keys_must_differ")
         self.root = root
-        self.store_key = store_key
-        self.audit_key = audit_key
+        self.signer = signer
+        self.floor = floor or NullFloor()
+        floor_separated(store_location if store_location is not None else str(root), self.floor)
         self.documents = documents or LocalDocuments(root)
-        self.audit = AuditChain(audit_key, read_text=self._read_audit, write_text=self._write_audit)
+        self.audit = AuditChain(signer, read_text=self._read_audit, write_text=self._write_audit)
 
     @classmethod
     def open(
         cls,
         location: str,
         *,
-        store_key: bytes,
-        audit_key: bytes,
+        signer: ConfigSigner,
         token_provider: Any = None,
+        floor: Any = None,
     ) -> ConfigStore:
         if location.startswith("https://"):
             if token_provider is None:
                 raise ConfigRejected("identity_token_rejected")
             documents = AzureBlobDocuments(location, token_provider=token_provider)
-            return cls(Path("/"), store_key=store_key, audit_key=audit_key, documents=documents)
-        return cls(Path(location), store_key=store_key, audit_key=audit_key)
+            return cls(Path("/"), signer=signer, documents=documents, floor=floor, store_location=location)
+        return cls(Path(location), signer=signer, floor=floor)
 
     def bootstrap(self, config: PortalConfig, *, actor_oid: str = "bootstrap") -> VersionRecord:
         with self.documents.lease():
@@ -329,6 +328,8 @@ class ConfigStore:
             raise ConfigRejected("audit_hash_missing")
         if active.version_id < highest:
             raise ConfigRejected("version_rollback")
+        if active.version_id < self.floor.high_water():
+            raise ConfigRejected("snapshot_replay")
 
     def _pointer_raw(self):
         return self.documents.read("active.json")
@@ -341,7 +342,7 @@ class ConfigStore:
             payload = json.loads(body.data)
         except json.JSONDecodeError as exc:
             raise ConfigRejected("published_config_rejected") from exc
-        if not isinstance(payload, dict) or not signature_ok(payload, self.store_key):
+        if not isinstance(payload, dict) or not signature_ok(payload, self.signer):
             raise ConfigRejected("store_signature_invalid")
         return payload
 
@@ -353,7 +354,7 @@ class ConfigStore:
         create: bool,
         if_match: str | None = None,
     ) -> None:
-        signed = sign_document(payload, self.store_key)
+        signed = sign_document(payload, self.signer)
         data = json.dumps(signed, sort_keys=True, separators=(",", ":")).encode("utf-8")
         self.documents.write(name, data, if_match=if_match, create=create)
 

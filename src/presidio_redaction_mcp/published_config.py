@@ -28,12 +28,12 @@ def log_published(version_id: int | None, sha256: str) -> None:
     )
 
 
-def load_published_or_fail(store_dir: Path | str, *, store_key: bytes, audit_key: bytes) -> Any:
+def load_published_or_fail(store_dir: Path | str, *, verifier: Any, floor: Any = None) -> Any:
     try:
         from presidio_admin.errors import ConfigRejected
         from presidio_admin.proxy_loader import load_for_proxy
 
-        return load_for_proxy(store_dir, store_key=store_key, audit_key=audit_key)
+        return load_for_proxy(store_dir, verifier=verifier, floor=floor)
     except ConfigError:
         raise
     except ConfigRejected as exc:

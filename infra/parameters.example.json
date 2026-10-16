@@ -30,22 +30,16 @@
       "value": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/example/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net"
     },
     "containerImage": {
-      "value": "example.azurecr.io/prm-admin:latest"
+      "value": "example.azurecr.io/prm-admin@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    },
+    "proxyPrincipalId": {
+      "value": "00000000-0000-4000-8000-000000000002"
     },
     "deployerPrincipalId": {
       "value": "00000000-0000-4000-8000-000000000001"
     },
     "deployerPrincipalType": {
       "value": "User"
-    },
-    "storeHmacKey": {
-      "value": "replace-with-vault-store-hmac-key-32b"
-    },
-    "auditHmacKey": {
-      "value": "replace-with-vault-audit-hmac-key-32b"
-    },
-    "sessionHmacKey": {
-      "value": "replace-with-vault-session-hmac-key-32"
     },
     "publishToVnet": {
       "value": true

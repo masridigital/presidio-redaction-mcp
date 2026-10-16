@@ -14,6 +14,7 @@ from presidio_admin.app import Portal, create_app
 from presidio_admin.approval import ChangeService
 from presidio_admin.authz import TENANT_ID, EntraVerifier, issuer_for
 from presidio_admin.schema import default_config
+from presidio_admin.signing import RsaConfigSigner
 from presidio_admin.store import ConfigStore
 
 AUDIENCE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
@@ -64,8 +65,13 @@ def session_key() -> bytes:
 
 
 @pytest.fixture
-def store(tmp_path: Path, hmac_key: bytes, audit_key: bytes) -> ConfigStore:
-    created = ConfigStore(tmp_path / "store", store_key=hmac_key, audit_key=audit_key)
+def signer() -> RsaConfigSigner:
+    return RsaConfigSigner.generate(key_id="test-key")
+
+
+@pytest.fixture
+def store(tmp_path: Path, signer: RsaConfigSigner) -> ConfigStore:
+    created = ConfigStore(tmp_path / "store", signer=signer)
     created.bootstrap(default_config())
     return created
 

@@ -2,8 +2,8 @@
 
 A single Admin may tighten a control. Enabling a tool, lowering a threshold,
 raising the Presidio score floor, disabling the Claude verifier, disabling a
-recognizer, or adding or re-enabling a client stays pending until a different
-Admin approves it.
+recognizer, or adding or re-enabling a client, or moving a client from NonPHI to PHI,
+stays pending until a different Admin approves it.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ RISKY_PREFIXES = (
     "disable_recognizer:",
     "add_client:",
     "enable_client:",
+    "phi_role:",
 )
 
 
@@ -200,6 +201,9 @@ def apply_patch(config: PortalConfig, patch: dict[str, Any]) -> PortalConfig:
         elif op == "set_client_enabled":
             client = _client(data, str(patch["client_id"]))
             client["enabled"] = _bool(patch["enabled"])
+        elif op == "set_client_role":
+            client = _client(data, str(patch["client_id"]))
+            client["app_role"] = str(patch["app_role"])
         else:
             raise ConfigRejected("change_rejected")
     except (KeyError, TypeError, ValueError) as exc:
@@ -243,8 +247,11 @@ def risk_flags(before: PortalConfig, after: PortalConfig) -> list[str]:
         old = before_clients.get(client.client_id)
         if old is None:
             flags.append(f"add_client:{client.client_id}")
-        elif client.enabled and not old.enabled:
-            flags.append(f"enable_client:{client.client_id}")
+        else:
+            if old.app_role != "PHI" and client.app_role == "PHI":
+                flags.append(f"phi_role:{client.client_id}")
+            if client.enabled and not old.enabled:
+                flags.append(f"enable_client:{client.client_id}")
     return flags
 
 

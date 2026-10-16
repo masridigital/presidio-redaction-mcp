@@ -39,7 +39,11 @@ param keyVaultDnsZoneId string
 
 param blobDnsZoneId string
 
+@description('Digest-pinned admin image. A floating tag is not accepted.')
 param containerImage string
+
+@description('Proxy managed identity principal id. Verify-only on the signing key, and the only writer of the version floor.')
+param proxyPrincipalId string
 
 param deployerPrincipalId string
 
@@ -50,20 +54,15 @@ param deployerPrincipalId string
 ])
 param deployerPrincipalType string = 'ServicePrincipal'
 
-@secure()
-param storeHmacKey string
-
-@secure()
-param auditHmacKey string
-
-@secure()
-param sessionHmacKey string
-
 param publishToVnet bool = true
 
-var secretsUserRole = '4633458b-17de-408a-b874-0445c86b69e6'
+// Deploy fails unless containerImage is repository@sha256:<digest>.
+var adminImagePin = indexOf(containerImage, '@sha256:') >= 0 && indexOf(containerImage, ':latest') < 0 ? 'pinned' : substring(containerImage, length(containerImage), 1)
+
 var secretsOfficerRole = 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
+var cryptoOfficerRole = '14b46e9e-c2b7-41b4-b545-8d5e335c5e6a'
 var blobContributorRole = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+var blobReaderRole = '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: '${namePrefix}-id'
@@ -90,28 +89,23 @@ resource kv 'Microsoft.KeyVault/vaults@2023-07-01' = {
   }
 }
 
-resource storeSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+resource signingKey 'Microsoft.KeyVault/vaults/keys@2023-07-01' = {
   parent: kv
-  name: 'store-hmac-key'
+  name: 'prm-config-signing'
   properties: {
-    value: storeHmacKey
+    kty: 'RSA'
+    keySize: 2048
+    keyOps: [
+      'sign'
+      'verify'
+    ]
+    attributes: {
+      enabled: true
+    }
   }
-}
-
-resource auditSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: kv
-  name: 'audit-hmac-key'
-  properties: {
-    value: auditHmacKey
-  }
-}
-
-resource sessionSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: kv
-  name: 'session-hmac-key'
-  properties: {
-    value: sessionHmacKey
-  }
+  dependsOn: [
+    deployerCryptoRole
+  ]
 }
 
 resource deployerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
@@ -124,12 +118,80 @@ resource deployerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-resource identityRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(kv.id, identity.id, secretsUserRole)
+resource deployerCryptoRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(kv.id, deployerPrincipalId, cryptoOfficerRole)
   scope: kv
   properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', secretsUserRole)
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', cryptoOfficerRole)
+    principalId: deployerPrincipalId
+    principalType: deployerPrincipalType
+  }
+}
+
+resource signRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
+  name: guid(resourceGroup().id, 'prm-config-sign')
+  properties: {
+    roleName: 'prm-config-sign-${uniqueString(resourceGroup().id)}'
+    description: 'Sign the config key and create the session secret. Generated in Key Vault.'
+    type: 'CustomRole'
+    permissions: [
+      {
+        actions: []
+        notActions: []
+        dataActions: [
+          'Microsoft.KeyVault/vaults/keys/read'
+          'Microsoft.KeyVault/vaults/keys/sign/action'
+          'Microsoft.KeyVault/vaults/secrets/getSecret/action'
+          'Microsoft.KeyVault/vaults/secrets/setSecret/action'
+        ]
+        notDataActions: []
+      }
+    ]
+    assignableScopes: [
+      resourceGroup().id
+    ]
+  }
+}
+
+resource verifyRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
+  name: guid(resourceGroup().id, 'prm-config-verify')
+  properties: {
+    roleName: 'prm-config-verify-${uniqueString(resourceGroup().id)}'
+    description: 'Read and verify the config signing key. Sign is not included.'
+    type: 'CustomRole'
+    permissions: [
+      {
+        actions: []
+        notActions: []
+        dataActions: [
+          'Microsoft.KeyVault/vaults/keys/read'
+          'Microsoft.KeyVault/vaults/keys/verify/action'
+        ]
+        notDataActions: []
+      }
+    ]
+    assignableScopes: [
+      resourceGroup().id
+    ]
+  }
+}
+
+resource identitySign 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(kv.id, identity.id, 'sign')
+  scope: kv
+  properties: {
+    roleDefinitionId: signRole.id
     principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource proxyVerify 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(kv.id, proxyPrincipalId, 'verify')
+  scope: kv
+  properties: {
+    roleDefinitionId: verifyRole.id
+    principalId: proxyPrincipalId
     principalType: 'ServicePrincipal'
   }
 }
@@ -157,6 +219,13 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
 resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-01-01' = {
   parent: storage
   name: 'default'
+  properties: {
+    isVersioningEnabled: true
+    deleteRetentionPolicy: {
+      enabled: true
+      days: 30
+    }
+  }
 }
 
 resource container 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
@@ -167,12 +236,58 @@ resource container 'Microsoft.Storage/storageAccounts/blobServices/containers@20
   }
 }
 
+resource configImmutability 'Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies@2023-01-01' = {
+  parent: container
+  name: 'default'
+  properties: {
+    immutabilityPeriodSinceCreationInDays: 365
+    allowProtectedAppendWrites: false
+  }
+}
+
+resource floorContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
+  parent: blobService
+  name: 'prm-floor'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
+resource floorImmutability 'Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies@2023-01-01' = {
+  parent: floorContainer
+  name: 'default'
+  properties: {
+    immutabilityPeriodSinceCreationInDays: 365
+    allowProtectedAppendWrites: true
+  }
+}
+
 resource blobRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storage.id, identity.id, blobContributorRole)
-  scope: storage
+  name: guid(container.id, identity.id, blobContributorRole)
+  scope: container
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', blobContributorRole)
     principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource floorWriter 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(floorContainer.id, proxyPrincipalId, blobContributorRole)
+  scope: floorContainer
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', blobContributorRole)
+    principalId: proxyPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource proxyConfigReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(container.id, proxyPrincipalId, blobReaderRole)
+  scope: container
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', blobReaderRole)
+    principalId: proxyPrincipalId
     principalType: 'ServicePrincipal'
   }
 }
@@ -267,6 +382,9 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
 resource app 'Microsoft.App/containerApps@2024-03-01' = {
   name: '${namePrefix}-app'
   location: location
+  tags: {
+    imagePin: adminImagePin
+  }
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {
@@ -283,23 +401,6 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
         transport: 'http'
         allowInsecure: false
       }
-      secrets: [
-        {
-          name: 'store-hmac-key'
-          keyVaultUrl: '${kv.properties.vaultUri}secrets/store-hmac-key'
-          identity: identity.id
-        }
-        {
-          name: 'audit-hmac-key'
-          keyVaultUrl: '${kv.properties.vaultUri}secrets/audit-hmac-key'
-          identity: identity.id
-        }
-        {
-          name: 'session-hmac-key'
-          keyVaultUrl: '${kv.properties.vaultUri}secrets/session-hmac-key'
-          identity: identity.id
-        }
-      ]
     }
     template: {
       containers: [
@@ -348,16 +449,12 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
               value: identity.properties.clientId
             }
             {
-              name: 'PRM_STORE_HMAC_KEY'
-              secretRef: 'store-hmac-key'
+              name: 'PRM_SIGNING_KEY_URL'
+              value: '${kv.properties.vaultUri}keys/prm-config-signing'
             }
             {
-              name: 'PRM_ADMIN_AUDIT_HMAC_KEY'
-              secretRef: 'audit-hmac-key'
-            }
-            {
-              name: 'PRM_ADMIN_SESSION_HMAC_KEY'
-              secretRef: 'session-hmac-key'
+              name: 'PRM_KEY_VAULT_URL'
+              value: kv.properties.vaultUri
             }
           ]
           probes: [
@@ -385,11 +482,10 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
     }
   }
   dependsOn: [
-    storeSecret
-    auditSecret
-    sessionSecret
-    identityRole
+    signingKey
+    identitySign
     container
+    configImmutability
     blobRole
   ]
 }
@@ -403,4 +499,6 @@ output managedIdentityClientId string = identity.properties.clientId
 // audience api://AzureADTokenExchange
 output managedIdentityPrincipalId string = identity.properties.principalId
 output configStoreUrl string = 'https://${storage.name}.blob.core.windows.net/prm-config'
+output signingKeyUrl string = '${kv.properties.vaultUri}keys/prm-config-signing'
+output versionFloorUrl string = 'https://${storage.name}.blob.core.windows.net/prm-floor'
 output environmentInternal bool = environment.properties.vnetConfiguration.internal

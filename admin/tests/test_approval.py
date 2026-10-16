@@ -53,7 +53,7 @@ def test_disabling_a_tool_publishes_immediately(changes, tokens) -> None:
 
 def test_lowering_a_threshold_needs_a_second_admin(store, changes, tokens) -> None:
     raised = default_config().model_copy(update={"score_threshold": 0.6})
-    fresh = type(store)(store.root.parent / "lower", store_key=store.store_key, audit_key=store.audit_key)
+    fresh = type(store)(store.root.parent / "lower", signer=store.signer)
     fresh.bootstrap(default_config())
     fresh.publish(
         raised,
@@ -130,6 +130,30 @@ def test_adding_a_client_needs_a_second_admin_and_maps_the_app_role(changes, tok
     assert again.risk_flags == (f"enable_client:{CLIENT_ID}",)
 
 
+def test_nonphi_to_phi_needs_a_second_admin(changes, tokens) -> None:
+    proposer = _principal(tokens, PROPOSER)
+    approver = _principal(tokens, APPROVER)
+    added = changes.submit(
+        proposer,
+        {
+            "op": "add_client",
+            "client_id": CLIENT_ID,
+            "display_name": "Synthetic Workload",
+            "app_role": "NonPHI",
+        },
+    )
+    changes.approve(approver, added.proposal_id or "")
+    pending = changes.submit(
+        proposer,
+        {"op": "set_client_role", "client_id": CLIENT_ID, "app_role": "PHI"},
+    )
+    assert pending.status == "pending"
+    assert pending.risk_flags == (f"phi_role:{CLIENT_ID}",)
+    assert changes.store.read_active().config.clients[0].app_role == "NonPHI"
+    changes.approve(approver, pending.proposal_id or "")
+    assert changes.store.read_active().config.clients[0].app_role == "PHI"
+
+
 def test_stale_proposal_is_not_applied(changes, tokens) -> None:
     proposer = _principal(tokens, PROPOSER)
     approver = _principal(tokens, APPROVER)
@@ -189,6 +213,12 @@ def test_risk_classifier_names_the_four_required_toggles() -> None:
         },
     )
     assert f"add_client:{CLIENT_ID}" in risk_flags(before, added)
+    data = added.model_dump(mode="json")
+    data["clients"][0]["app_role"] = "PHI"
+    from presidio_admin.schema import parse_config
+
+    phi = parse_config(data)
+    assert f"phi_role:{CLIENT_ID}" in risk_flags(added, phi)
 
 
 def test_third_upstream_is_rejected_even_as_a_document() -> None:

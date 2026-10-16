@@ -59,9 +59,13 @@ A sealed break-glass account exists outside that group. It is stored sealed, rev
 
 ### What is signed
 
-Every version, proposal, and the active pointer is HMAC-SHA256. The proxy verifies the signature, recomputes risk flags against the previous signed version (version 1 against the default-deny document), and requires an approver object id that is not the actor when the flags are risky. The active hash must appear on a verified audit row whose action is `bootstrap`, `publish`, or `approve`. A version number that does not increase, including a still-valid signature that points at an older version, is rejected.
+Every version, proposal, the active pointer, and the admin audit chain is RSA-PSS SHA-256 (PS256). Key Vault generates the key `prm-config-signing`. The proxy holds a verify-only role and verifies with the public key. It cannot sign, so it cannot forge a snapshot. See `docs/signing-key-rotation.md`.
 
-Three HMAC keys are distinct: the store key, the admin audit-chain key, and the session key. The proxy's tool-call audit key is a fourth key and must differ from the first two. The approver page shows the metadata diff and both hashes before approve.
+The proxy verifies the signature, recomputes risk flags against the previous signed version (version 1 against the default-deny document), and requires an approver object id that is not the actor when the flags are risky. A NonPHI client flipped to PHI is one of those flags. The active hash must appear on a verified audit row whose action is `bootstrap`, `publish`, or `approve`. A version number that does not increase is rejected.
+
+A second control sits outside the store writer. Blob versioning is on, and both containers have an immutability policy. The proxy records the highest `version_id` it has loaded in `prm-floor`, an append blob the portal identity cannot write. A signed snapshot whose version is below that floor is rejected as `snapshot_replay`. Production and Entra mode refuse to start without `PRM_VERSION_FLOOR`.
+
+The session cookie key is created in Key Vault on first portal start (`session-hmac-key`). It is not a deployment parameter. The proxy's tool-call audit log stays a separate HMAC. The approver page shows the metadata diff and both hashes before approve.
 
 Writes take a lease (`lease` on disk, a blob lease on `writer.lock` in Azure) and an `If-Match` ETag on `active.json` and `audit.jsonl`. That is safe for one replica. `maxReplicas` stays 1 until that lease is the only writer. Scaling past one replica without it can split the chain.
 
@@ -69,9 +73,9 @@ Writes take a lease (`lease` on disk, a blob lease on `writer.lock` in Azure) an
 
 The admin client has no client secret. Production uses the portal's user-assigned managed identity as a federated credential (`client_assertion`, audience `api://AzureADTokenExchange`). A certificate assertion (`private_key_jwt`, `x5t`) is the other accepted credential. The callback returns 503 when neither is configured.
 
-The config container is a private blob with `allowSharedKeyAccess: false`. Container Apps cannot mount Azure Files with a managed identity, so this template does not create a file share and does not call `listKeys()`. The proxy reads the same container with its system-assigned identity.
+The config container is a private blob with `allowSharedKeyAccess: false`. Container Apps cannot mount Azure Files with a managed identity, so this template does not create a file share and does not call `listKeys()`. The portal identity can write `prm-config` only. The proxy identity reads that container and is the only writer of `prm-floor`.
 
-`require_published_config: true` is set in `config/allowlist.yaml`. Production and Entra mode refuse to start when `PRM_CONFIG_STORE` is unset. Startup and `/healthz` both report `version_id` and the published hash.
+`require_published_config` defaults to true. Production forces the store even when the file says false. Entra mode requires it while the flag stays on. Startup and `/healthz` both report `version_id` and the published hash.
 
 The client list is enforced. A published client with app role `PHI` is a human PHI caller and is added to the BAA client set. `NonPHI` is a workload and is not. Entra mode with no enabled client fails closed. The verifier toggle is enforced on `allowlist.verifier.enabled` and stays off unless a published version turns it on, and only when the deployment is Azure and marked BAA. Turning it off still needs a second Admin.
 
@@ -87,3 +91,5 @@ The session cookie requires `nbf`. It expires after 15 minutes without a request
 | App role via a group, least privilege | [App roles](https://learn.microsoft.com/en-us/entra/identity-platform/howto-add-app-roles-in-apps), [Conditional Access](https://learn.microsoft.com/en-us/entra/identity/conditional-access/concept-conditional-access-cloud-apps) | `Admin` group of named accounts, `amr` and `acrs` checks |
 | Break-glass account | [Emergency access](https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/security-emergency-access) | Sealed account. Sign-in alerts Chief and Cap. Approval code does not special-case it |
 | Blob lease and ETag | [Blob leases](https://learn.microsoft.com/en-us/rest/api/storageservices/lease-blob), [conditional headers](https://learn.microsoft.com/en-us/rest/api/storageservices/specifying-conditional-headers-for-blob-service-operations) | `documents.py`. `maxReplicas: 1` until the lease is the only writer |
+| Asymmetric sign, verify-only proxy | [Key Vault sign](https://learn.microsoft.com/en-us/rest/api/keyvault/keys/sign/sign) | `signing.py`, `key_vault.py`. Portal `keys/sign/action`. Proxy `keys/verify/action` |
+| Blob versioning and immutability | [Versioning](https://learn.microsoft.com/en-us/azure/storage/blobs/versioning-overview), [immutability policies](https://learn.microsoft.com/en-us/azure/storage/blobs/immutable-storage-overview) | `isVersioningEnabled`, 365-day policies, `prm-floor` outside the store writer |

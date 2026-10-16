@@ -308,7 +308,7 @@ class AllowlistFile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: Literal[1]
-    require_published_config: bool = False
+    require_published_config: bool = True
     upstreams: dict[str, UpstreamSpec]
     callers: dict[str, CallerSpec]
     presidio: PresidioSpec
@@ -396,10 +396,14 @@ class Settings(BaseModel):
 
 
 def assert_published_store(settings: Settings, store_dir: str | None) -> None:
-    """Production and Entra mode refuse to start on the static allowlist alone."""
-    if not settings.allowlist.require_published_config:
+    """Production always requires the published store. Entra mode does when the flag is on.
+
+    The flag defaults on. Production forces it even if the file says false.
+    """
+    forced = settings.env == "production"
+    if not forced and not settings.allowlist.require_published_config:
         return
-    if settings.env != "production" and settings.auth_mode != "entra":
+    if not forced and settings.auth_mode != "entra":
         return
     if not store_dir:
         raise ConfigError("published_config_required")

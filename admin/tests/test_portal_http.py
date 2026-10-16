@@ -58,3 +58,33 @@ def test_pages_and_form_approval_flow(client, tokens) -> None:
     assert "prm_admin_up 1" in metrics.text
     assert "prm_admin_verifier_enabled 0" in metrics.text
     assert "prm_admin_proposals_pending 1" in metrics.text
+
+
+def test_clients_page_offers_grant_phi(client, tokens, changes) -> None:
+    proposer = tokens.verifier.verify(tokens.token(PROPOSER))
+    approver = tokens.verifier.verify(tokens.token("22222222-2222-4222-8222-222222222222"))
+    client_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1"
+    added = changes.submit(
+        proposer,
+        {
+            "op": "add_client",
+            "client_id": client_id,
+            "display_name": "Synthetic Workload",
+            "app_role": "NonPHI",
+        },
+    )
+    changes.approve(approver, added.proposal_id or "")
+    client.post("/auth/session", headers=tokens.auth())
+    page = client.get("/clients")
+    assert page.status_code == 200
+    assert "Grant PHI" in page.text
+    assert "NonPHI" in page.text
+    csrf = _csrf(page.text)
+    posted = client.post(
+        "/actions",
+        data={"csrf": csrf, "op": "set_client_role", "client_id": client_id, "app_role": "PHI"},
+        follow_redirects=True,
+    )
+    assert posted.status_code == 200
+    assert "second Admin" in posted.text
+    assert changes.store.read_active().config.clients[0].app_role == "NonPHI"

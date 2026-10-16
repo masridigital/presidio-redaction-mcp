@@ -81,19 +81,21 @@ def test_a_tampered_row_fails_verification(hmac_key: bytes) -> None:
     assert "payload" not in json.dumps(view)
 
 
-def test_portal_audit_page_stays_phi_free(client, tokens, store, audit_key: bytes) -> None:
+def test_portal_audit_page_stays_phi_free(client, tokens, store) -> None:
+    from presidio_admin.audit_view import seal_line
+
     path = store.root / "audit.jsonl"
     lines = read_lines(path)
     previous = json.loads(lines[-1])["row_hash"]
-    planted = _line(
-        audit_key,
-        previous,
+    planted = seal_line(
+        store.signer,
         {
             "event": "tool_call",
             "tool": "stackjack_health_check",
             "decision": "allow",
             "reason_code": "ok",
             "ts": "2026-10-16T00:00:02+00:00",
+            "prev_hash": previous,
             "payload": PLANTED_NAME,
             "arguments": {"note": PLANTED},
         },

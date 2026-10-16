@@ -153,6 +153,12 @@ def create_app(portal: Portal) -> Starlette:
                 f"{hidden(_csrf.get(), op='set_client_enabled', client_id=client.client_id, enabled=nxt)}"
                 f"<button class='quiet' type='submit'>{label}</button></form>"
             )
+            if client.app_role != "PHI":
+                form += (
+                    f"<form class='inline' method='post' action='/actions'>"
+                    f"{hidden(_csrf.get(), op='set_client_role', client_id=client.client_id, app_role='PHI')}"
+                    f"<button class='quiet' type='submit'>Grant PHI</button></form>"
+                )
             rows.append(
                 "<tr>"
                 f"<td><code>{esc(client.client_id)}</code></td>"
@@ -489,11 +495,10 @@ def create_app(portal: Portal) -> Starlette:
 
 
 def create_app_from_env() -> Starlette:
-    store_key = _named_key("PRM_STORE_HMAC_KEY")
-    audit_key = _named_key("PRM_ADMIN_AUDIT_HMAC_KEY")
-    session_key = _named_key("PRM_ADMIN_SESSION_HMAC_KEY")
-    if len({store_key, audit_key, session_key}) != 3:
-        raise SystemExit(1)
+    from presidio_admin.key_vault import load_session_key, signer_from_env
+
+    signer = signer_from_env(allow_sign=True)
+    session_key = load_session_key()
     location = os.environ.get("PRM_CONFIG_STORE", "/data/store")
     if location.startswith("https://"):
         from presidio_admin.documents import imds_token
@@ -503,9 +508,9 @@ def create_app_from_env() -> Starlette:
         def token_provider() -> str:
             return imds_token(resource="https://storage.azure.com/", client_id=client_id)
 
-        store = ConfigStore.open(location, store_key=store_key, audit_key=audit_key, token_provider=token_provider)
+        store = ConfigStore.open(location, signer=signer, token_provider=token_provider)
     else:
-        store = ConfigStore(Path(location), store_key=store_key, audit_key=audit_key)
+        store = ConfigStore(Path(location), signer=signer)
     try:
         active = store.read_active()
     except ConfigRejected as exc:
@@ -682,6 +687,12 @@ def _patch_from_form(form) -> dict[str, object]:  # type: ignore[no-untyped-def]
             "display_name": str(form.get("display_name") or ""),
             "app_role": str(form.get("app_role") or ""),
         }
+    if op == "set_client_role":
+        return {
+            "op": op,
+            "client_id": str(form.get("client_id") or ""),
+            "app_role": str(form.get("app_role") or ""),
+        }
     enabled = str(form.get("enabled") or "")
     if enabled not in {"true", "false"}:
         raise ApprovalError("change_rejected")
@@ -697,7 +708,7 @@ def _return_to(op: str) -> str:
         return "/proposals"
     if op in {"set_tool_enabled", "set_upstream_enabled"}:
         return "/upstreams"
-    if op in {"add_client", "set_client_enabled"}:
+    if op in {"add_client", "set_client_enabled", "set_client_role"}:
         return "/clients"
     if op in {"set_score_threshold", "set_pattern_score", "set_pattern_enabled"}:
         return "/recognizers"

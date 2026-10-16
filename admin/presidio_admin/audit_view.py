@@ -1,7 +1,7 @@
-"""HMAC-chained audit log and a PHI-free view of it.
+"""Audit log and a PHI-free view of it.
 
-The chain matches the proxy format: each row carries ``prev_hash``, and
-``row_hash`` is HMAC-SHA256 over the canonical JSON with ``row_hash`` removed.
+The proxy tool-call log stays an HMAC chain. The admin config chain is signed
+with the config key. The proxy verifies that signature and does not hold it.
 Rendering keeps an allowlist of metadata fields and drops everything else.
 """
 
@@ -15,6 +15,8 @@ import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from presidio_admin.signing import ConfigSigner, canonical, sha256_hex
 
 GENESIS = "0" * 64
 
@@ -154,12 +156,10 @@ def read_lines(path: Path) -> list[str]:
 
 
 class AuditChain:
-    """Append-only chain. Payload-shaped keys are dropped before they are hashed."""
+    """Append-only admin chain. Each row is signed. Payload fields are dropped first."""
 
-    def __init__(self, key: bytes, *, read_text: Any, write_text: Any) -> None:
-        if len(key) < 32:
-            raise ValueError("hmac_key_too_short")
-        self.key = key
+    def __init__(self, signer: ConfigSigner, *, read_text: Any, write_text: Any) -> None:
+        self.signer = signer
         self._read_text = read_text
         self._write_text = write_text
         self._lock = threading.Lock()
@@ -170,22 +170,29 @@ class AuditChain:
             clean = {
                 key: value
                 for key, value in row.items()
-                if key in ALLOWED_FIELDS and key.lower() not in FORBIDDEN_FIELDS and key != "row_hash"
+                if key in ALLOWED_FIELDS and key.lower() not in FORBIDDEN_FIELDS and key not in {"row_hash", "signature"}
             }
             clean["ts"] = datetime.now(UTC).isoformat()
             clean["prev_hash"] = self._prev
-            clean["row_hash"] = row_hmac(self.key, clean)
-            line = json.dumps(clean, sort_keys=True, separators=(",", ":"))
+            line = seal_line(self.signer, clean)
             current = self._read_text()
             prefix = current if current.endswith("\n") or not current else current + "\n"
             self._write_text(prefix + line + "\n")
-            self._prev = str(clean["row_hash"])
+            self._prev = str(json.loads(line)["row_hash"])
 
     def verify(self) -> bool:
-        return verify_lines(self._lines(), self.key)
+        return verify_signed_lines(self._lines(), self.signer)
 
     def render(self) -> dict[str, Any]:
-        return render_lines(self._lines(), self.key)
+        rows = []
+        for line in self._lines():
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict):
+                rows.append(project_row(row))
+        return {"chain_valid": self.verify(), "rows": rows}
 
     def _lines(self) -> list[str]:
         return [line for line in self._read_text().splitlines() if line.strip()]
@@ -202,6 +209,43 @@ class AuditChain:
         if isinstance(value, str) and _HEX64.match(value):
             return value
         return GENESIS
+
+
+def seal_line(signer: ConfigSigner, row: dict[str, Any]) -> str:
+    body = {key: value for key, value in row.items() if key not in {"signature", "row_hash"}}
+    body["row_hash"] = sha256_hex(canonical(body))
+    body["signature"] = {"alg": "PS256", "kid": signer.key_id, "sig": signer.sign(canonical(body))}
+    return json.dumps(body, sort_keys=True, separators=(",", ":"))
+
+
+def verify_signed_lines(lines: list[str], signer: ConfigSigner) -> bool:
+    previous = GENESIS
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(row, dict) or not _signed_row_ok(signer, row, previous):
+            return False
+        previous = str(row["row_hash"])
+    return True
+
+
+def _signed_row_ok(signer: ConfigSigner, row: dict[str, Any], previous: str) -> bool:
+    signature = row.get("signature")
+    if not isinstance(signature, dict) or signature.get("alg") != "PS256":
+        return False
+    kid = signature.get("kid")
+    sig = signature.get("sig")
+    if not isinstance(kid, str) or not isinstance(sig, str):
+        return False
+    body = {key: value for key, value in row.items() if key != "signature"}
+    link = {key: value for key, value in body.items() if key != "row_hash"}
+    if sha256_hex(canonical(link)) != body.get("row_hash"):
+        return False
+    if body.get("prev_hash") != previous:
+        return False
+    return signer.verify(canonical(body), sig, kid)
 
 
 def _scrub(key: str, value: Any) -> Any:

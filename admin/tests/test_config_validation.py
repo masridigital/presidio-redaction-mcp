@@ -5,8 +5,10 @@ import json
 import pytest
 
 from presidio_admin.errors import ConfigRejected
+from presidio_admin.floor import LocalVersionFloor
 from presidio_admin.proxy_loader import load_for_proxy
 from presidio_admin.schema import default_config, parse_config
+from presidio_admin.signing import RsaConfigSigner
 from presidio_admin.store import ConfigStore
 
 
@@ -84,32 +86,34 @@ def test_duplicate_client_and_email_display_name_are_rejected() -> None:
         parse_config(payload)
 
 
-def test_proxy_reader_fails_closed_on_a_tampered_or_missing_store(tmp_path, hmac_key: bytes, audit_key: bytes) -> None:
+def test_proxy_reader_fails_closed_on_a_tampered_or_missing_store(tmp_path, signer: RsaConfigSigner) -> None:
+    verifier = signer.public_verifier()
     with pytest.raises(ConfigRejected):
-        load_for_proxy(tmp_path / "missing", store_key=hmac_key, audit_key=audit_key)
+        load_for_proxy(tmp_path / "missing", verifier=verifier)
 
-    store = ConfigStore(tmp_path / "store", store_key=hmac_key, audit_key=audit_key)
+    store = ConfigStore(tmp_path / "store", signer=signer)
     store.bootstrap(default_config())
-    loaded = load_for_proxy(store.root, store_key=hmac_key, audit_key=audit_key)
+    loaded = load_for_proxy(store.root, verifier=verifier)
     assert loaded.config.enabled_tools() == []
 
     pointer = json.loads((store.root / "active.json").read_text(encoding="utf-8"))
     pointer["sha256"] = "0" * 64
     (store.root / "active.json").write_text(json.dumps(pointer), encoding="utf-8")
     with pytest.raises(ConfigRejected) as caught:
-        load_for_proxy(store.root, store_key=hmac_key, audit_key=audit_key)
+        load_for_proxy(store.root, verifier=verifier)
     assert caught.value.reason_code == "store_signature_invalid"
 
-    with pytest.raises(ConfigRejected):
-        load_for_proxy(store.root, store_key=b"k" * 32, audit_key=audit_key)
+    with pytest.raises(ConfigRejected) as signed:
+        load_for_proxy(store.root, verifier=signer)
+    assert signed.value.reason_code == "sign_not_permitted"
 
 
-def test_a_signed_older_pointer_is_a_rollback(tmp_path, hmac_key: bytes, audit_key: bytes) -> None:
-    store = ConfigStore(tmp_path / "store", store_key=hmac_key, audit_key=audit_key)
+def test_a_signed_older_pointer_is_a_rollback(tmp_path, signer: RsaConfigSigner) -> None:
+    verifier = signer.public_verifier()
+    store = ConfigStore(tmp_path / "store", signer=signer)
     store.bootstrap(default_config())
     first = (store.root / "active.json").read_bytes()
-    tightened = default_config().model_copy(deep=True)
-    data = tightened.model_dump(mode="json")
+    data = default_config().model_dump(mode="json")
     data["upstreams"]["stackjack"]["enabled"] = False
     store.publish(
         parse_config(data),
@@ -122,17 +126,19 @@ def test_a_signed_older_pointer_is_a_rollback(tmp_path, hmac_key: bytes, audit_k
     assert store.read_active().version_id == 2
     (store.root / "active.json").write_bytes(first)
     with pytest.raises(ConfigRejected) as caught:
-        load_for_proxy(store.root, store_key=hmac_key, audit_key=audit_key)
+        load_for_proxy(store.root, verifier=verifier)
     assert caught.value.reason_code == "version_rollback"
 
 
-def test_equal_hmac_keys_are_rejected(tmp_path) -> None:
+def test_version_floor_rejects_a_signed_snapshot(tmp_path, signer: RsaConfigSigner) -> None:
+    verifier = signer.public_verifier()
+    store = ConfigStore(tmp_path / "store", signer=signer)
+    store.bootstrap(default_config())
+    floor = LocalVersionFloor(tmp_path / "outside" / "floor.jsonl")
+    floor.advance(4, "ab" * 32)
     with pytest.raises(ConfigRejected) as caught:
-        ConfigStore(tmp_path / "same", store_key=b"s" * 32, audit_key=b"s" * 32)
-    assert caught.value.reason_code == "hmac_keys_must_differ"
-
-
-def test_short_hmac_key_is_rejected(tmp_path) -> None:
-    with pytest.raises(ConfigRejected) as caught:
-        ConfigStore(tmp_path / "short", store_key=b"too-short", audit_key=b"a" * 32)
-    assert caught.value.reason_code == "hmac_key_too_short"
+        load_for_proxy(store.root, verifier=verifier, floor=floor)
+    assert caught.value.reason_code == "snapshot_replay"
+    with pytest.raises(ConfigRejected) as inside:
+        ConfigStore(tmp_path / "store", signer=signer, floor=LocalVersionFloor(tmp_path / "store" / "floor.jsonl"))
+    assert inside.value.reason_code == "version_floor_inside_store"
